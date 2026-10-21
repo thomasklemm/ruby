@@ -314,6 +314,7 @@ static inline void
 vm_cme_invalidate(rb_callable_method_entry_t *cme)
 {
     rb_vm_mutation_epoch_bump();
+    rb_vm_epoch_token_revoke(cme);
     VM_ASSERT(IMEMO_TYPE_P(cme, imemo_ment), "cme: %d", imemo_type((VALUE)cme));
     VM_ASSERT(callable_method_entry_p(cme));
     METHOD_ENTRY_INVALIDATED_SET(cme);
@@ -371,6 +372,7 @@ invalidate_method_cache_in_cc_table(VALUE tbl, ID mid)
     if (tbl && rb_managed_id_table_lookup(tbl, mid, &ccs_data)) {
         struct rb_class_cc_entries *ccs = (struct rb_class_cc_entries *)ccs_data;
         rb_vm_mutation_epoch_bump();
+        rb_vm_epoch_token_revoke(ccs->cme);
         rb_yjit_cme_invalidate((rb_callable_method_entry_t *)ccs->cme);
         rb_zjit_cme_invalidate((rb_callable_method_entry_t *)ccs->cme);
         if (NIL_P(ccs->cme->owner)) invalidate_negative_cache(mid);
@@ -386,6 +388,7 @@ invalidate_callable_method_entry_in_callable_m_table(struct rb_id_table *tbl, ID
     VALUE cme;
     if (tbl && rb_id_table_lookup(tbl, mid, &cme)) {
         rb_vm_mutation_epoch_bump();
+        rb_vm_epoch_token_revoke((rb_callable_method_entry_t *)cme);
         rb_yjit_cme_invalidate((rb_callable_method_entry_t *)cme);
         rb_zjit_cme_invalidate((rb_callable_method_entry_t *)cme);
         rb_id_table_delete(tbl, mid);
@@ -456,6 +459,7 @@ invalidate_complemented_method_entry_in_callable_m_table(struct rb_id_table *tbl
     VALUE cme;
     if (tbl && rb_id_table_lookup(tbl, mid, &cme)) {
         rb_vm_mutation_epoch_bump();
+        rb_vm_epoch_token_revoke((rb_callable_method_entry_t *)cme);
         rb_yjit_cme_invalidate((rb_callable_method_entry_t *)cme);
         rb_zjit_cme_invalidate((rb_callable_method_entry_t *)cme);
         rb_id_table_delete(tbl, mid);

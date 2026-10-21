@@ -15,6 +15,8 @@
  * we now have Ractor.  This file is kind of obsolescent.
  */
 #include "ruby/internal/dllexport.h"
+#include "ruby/internal/value.h"
+#include "ruby/internal/value_type.h"
 
 RBIMPL_SYMBOL_EXPORT_BEGIN()
 
@@ -55,6 +57,21 @@ void ruby_vm_at_exit(void(*func)(ruby_vm_t *));
  * @return true if free-at-exit is enabled, false otherwise.
  */
 bool ruby_free_at_exit_p(void);
+
+/**
+ * Experimental same-main-Ractor method lookup assumption. klass must be a
+ * Class (including an already existing singleton class). Returns nil for a
+ * missing or refined entry. The token retains its class and entry until GC.
+ * No Ruby callback or method_missing is invoked. Requires the GVL.
+ * Consumers must independently guard receiver class, lexical scope, mutable
+ * data and every boundary that can run Ruby; this is not an execution lock.
+ */
+VALUE rb_vm_method_token(VALUE klass, ID mid);
+
+/** Check a token returned above. Revocation is permanent and conservative.
+ * Requires the GVL in the main Ractor. No allocation or Ruby callback.
+ */
+int rb_vm_method_token_valid_p(VALUE token);
 
 RBIMPL_SYMBOL_EXPORT_END()
 

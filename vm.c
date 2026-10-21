@@ -797,6 +797,8 @@ vm_mutation_epoch(VALUE self)
     return epoch < (unsigned long)FIXNUM_MAX ? LONG2FIX(epoch) : Qnil;
 }
 
+#include "vm_method_token.c"
+
 static const struct rb_callcache vm_empty_cc = {
     .flags = T_IMEMO | (imemo_callcache << FL_USHIFT) | VM_CALLCACHE_UNMARKABLE,
     .klass = Qundef,
@@ -4672,6 +4674,7 @@ Init_VM(void)
     rb_undef_method(CLASS_OF(rb_cRubyVM), "new");
     rb_define_singleton_method(rb_cRubyVM, "stat", vm_stat, -1);
     rb_define_singleton_method(rb_cRubyVM, "mutation_epoch", vm_mutation_epoch, 0);
+    Init_epoch_token();
     rb_define_singleton_method(rb_cRubyVM, "keep_script_lines", vm_keep_script_lines, 0);
     rb_define_singleton_method(rb_cRubyVM, "keep_script_lines=", vm_keep_script_lines_set, 1);
 
