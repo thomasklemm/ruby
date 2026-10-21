@@ -3,6 +3,7 @@
  */
 
 #include "id_table.h"
+#include "ruby/vm.h"
 #include "yjit.h"
 
 #define METHOD_DEBUG 0
@@ -2011,6 +2012,31 @@ const rb_callable_method_entry_t *
 rb_callable_method_entry(VALUE klass, ID mid)
 {
     return callable_method_entry(klass, mid, NULL);
+}
+
+/* A normal call cache already covers both leaf (CC) and tree (CME)
+ * invalidation. Flag 0 does not select a mandatory-only overload. */
+VALUE
+rb_vm_method_token(VALUE klass, ID mid)
+{
+    Check_Type(klass, T_CLASS);
+    if (rb_multi_ractor_p() || rb_box_available()) return Qnil;
+
+    const struct rb_callinfo ci = VM_CI_ON_STACK(mid, 0, 0, NULL);
+    const struct rb_callcache *cc = vm_search_cc(klass, &ci);
+    const rb_callable_method_entry_t *cme = vm_cc_cme(cc);
+    if (!cme || cme->def->type == VM_METHOD_TYPE_REFINED) return Qnil;
+    return (VALUE)cc;
+}
+
+int
+rb_vm_method_token_valid_p(VALUE token)
+{
+    if (!IMEMO_TYPE_P(token, imemo_callcache)) {
+        rb_raise(rb_eTypeError, "expected a method token");
+    }
+    if (rb_multi_ractor_p() || rb_box_available()) return false;
+    return !vm_cc_invalidated_p((const struct rb_callcache *)token);
 }
 
 static const rb_method_entry_t *resolve_refined_method(VALUE refinements, const rb_method_entry_t *me, VALUE *defined_class_ptr);

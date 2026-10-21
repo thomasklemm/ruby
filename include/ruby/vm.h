@@ -15,6 +15,8 @@
  * we now have Ractor.  This file is kind of obsolescent.
  */
 #include "ruby/internal/dllexport.h"
+#include "ruby/internal/stdbool.h"
+#include "ruby/internal/value.h"
 
 RBIMPL_SYMBOL_EXPORT_BEGIN()
 
@@ -55,6 +57,36 @@ void ruby_vm_at_exit(void(*func)(ruby_vm_t *));
  * @return true if free-at-exit is enabled, false otherwise.
  */
 bool ruby_free_at_exit_p(void);
+
+/**
+ * Experimental lookup assumption for a Class (including singleton classes).
+ * Returns nil for missing/refined entries, with Ruby Box enabled, or outside
+ * single-main-Ractor execution. Does not invoke the target or method_missing.
+ * Requires the GVL. Raises TypeError for a non-Class argument.
+ *
+ * The token is an internal VM object: NEVER expose it to Ruby, even in an
+ * Array. Retain it in C and mark with rb_gc_mark(), or rb_gc_mark_movable()
+ * plus rb_gc_location(); use RB_OBJ_WRITE() when storing in a Ruby object.
+ * It retains neither klass nor the method entry. GC conservatively revokes
+ * it when either is collected; a revoked token remains safe to check.
+ * It cannot be shared between Ractors.
+ * It covers lookup only, not callees/super, receiver identity, lexical
+ * refinements or mutable data. Certify the original definition separately.
+ * No compatibility guarantee is provided for this experimental C API.
+ */
+VALUE rb_vm_method_token(VALUE klass, ID mid);
+
+/**
+ * Check a token returned above. Requires the GVL. Raises TypeError for nil
+ * or another object. A genuine token check allocates nothing and invokes no
+ * Ruby callback; invalidation is permanent and conservative.
+ * Returns false outside single-main-Ractor execution or with Ruby Box enabled.
+ * After fork, the child's normal call-cache state applies; a revoked cache
+ * never revives, but an unchanged cache may become usable again. A successful
+ * check is not a lock across Ruby execution or
+ * thread switches: check again at every relevant reentry boundary.
+ */
+int rb_vm_method_token_valid_p(VALUE token);
 
 RBIMPL_SYMBOL_EXPORT_END()
 
