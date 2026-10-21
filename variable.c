@@ -2918,6 +2918,7 @@ rb_autoload_str(VALUE module, ID name, VALUE feature)
     VALUE result = rb_mutex_synchronize(autoload_mutex, autoload_synchronized, (VALUE)&arguments);
 
     if (result == Qtrue) {
+        rb_vm_mutation_epoch_bump();
         const_added(module, name);
     }
 }
@@ -3598,6 +3599,8 @@ rb_const_remove(VALUE mod, ID id)
     VALUE writable_ce = 0;
     if (rb_id_table_lookup(RCLASS_WRITABLE_CONST_TBL(mod), id, &writable_ce)) {
         rb_id_table_delete(RCLASS_WRITABLE_CONST_TBL(mod), id);
+        /* Warning.warn below may reenter Ruby after the constant is gone. */
+        rb_vm_mutation_epoch_bump();
         if ((rb_const_entry_t *)writable_ce != ce) {
             SIZED_FREE((rb_const_entry_t *)writable_ce);
         }
@@ -3887,6 +3890,7 @@ const_set(VALUE klass, ID id, VALUE val)
     check_before_mod_set(klass, id, val, "constant");
 
     RB_VM_LOCKING() {
+        rb_vm_mutation_epoch_bump();
         struct rb_id_table *tbl = RCLASS_WRITABLE_CONST_TBL(klass);
         if (!tbl) {
             tbl = rb_id_table_create(0);
@@ -3964,6 +3968,7 @@ autoload_const_value_for_named_constant(VALUE module, ID name, struct autoload_c
 static void
 const_tbl_update(struct autoload_const *ac, int autoload_force)
 {
+    rb_vm_mutation_epoch_bump();
     VALUE value;
     VALUE klass = ac->module;
     VALUE val = ac->value;
@@ -3995,6 +4000,7 @@ const_tbl_update(struct autoload_const *ac, int autoload_force)
                 ce->line = line;
             }
             RUBY_ASSERT_CRITICAL_SECTION_LEAVE();
+            rb_vm_mutation_epoch_bump();
             return;
         }
         else {
@@ -4032,6 +4038,7 @@ setup_const_entry(rb_const_entry_t *ce, VALUE klass, VALUE val,
     ce->flag = visibility;
     RB_OBJ_WRITE(klass, &ce->value, val);
     RB_OBJ_WRITE(klass, &ce->u.file, rb_source_location(&ce->line));
+    rb_vm_mutation_epoch_bump();
 }
 
 void

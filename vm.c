@@ -775,6 +775,28 @@ rb_serial_t ruby_vm_constant_cache_invalidations = 0;
 rb_serial_t ruby_vm_constant_cache_misses = 0;
 rb_serial_t ruby_vm_global_cvar_state = 1;
 
+/* Experimental structural generation, GCC/Clang LP64 only. Saturate, never wrap/box.
+ * nil permanently disables certificates once the Fixnum range is exhausted.
+ * Atomics avoid torn/lost generations, but are not a multi-Ractor seqlock.
+ */
+static unsigned long ruby_vm_mutation_epoch = 0;
+
+void
+rb_vm_mutation_epoch_bump(void)
+{
+    unsigned long old = __atomic_load_n(&ruby_vm_mutation_epoch, __ATOMIC_RELAXED);
+    while (old < (unsigned long)FIXNUM_MAX &&
+           !__atomic_compare_exchange_n(&ruby_vm_mutation_epoch, &old, old + 1,
+                                        true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
+}
+
+static VALUE
+vm_mutation_epoch(VALUE self)
+{
+    unsigned long epoch = __atomic_load_n(&ruby_vm_mutation_epoch, __ATOMIC_RELAXED);
+    return epoch < (unsigned long)FIXNUM_MAX ? LONG2FIX(epoch) : Qnil;
+}
+
 static const struct rb_callcache vm_empty_cc = {
     .flags = T_IMEMO | (imemo_callcache << FL_USHIFT) | VM_CALLCACHE_UNMARKABLE,
     .klass = Qundef,
@@ -4649,6 +4671,7 @@ Init_VM(void)
     rb_undef_alloc_func(rb_cRubyVM);
     rb_undef_method(CLASS_OF(rb_cRubyVM), "new");
     rb_define_singleton_method(rb_cRubyVM, "stat", vm_stat, -1);
+    rb_define_singleton_method(rb_cRubyVM, "mutation_epoch", vm_mutation_epoch, 0);
     rb_define_singleton_method(rb_cRubyVM, "keep_script_lines", vm_keep_script_lines, 0);
     rb_define_singleton_method(rb_cRubyVM, "keep_script_lines=", vm_keep_script_lines_set, 1);
 

@@ -313,6 +313,7 @@ rb_vm_mtbl_dump(const char *msg, VALUE klass, ID target_mid)
 static inline void
 vm_cme_invalidate(rb_callable_method_entry_t *cme)
 {
+    rb_vm_mutation_epoch_bump();
     VM_ASSERT(IMEMO_TYPE_P(cme, imemo_ment), "cme: %d", imemo_type((VALUE)cme));
     VM_ASSERT(callable_method_entry_p(cme));
     METHOD_ENTRY_INVALIDATED_SET(cme);
@@ -332,6 +333,7 @@ rb_clear_constant_cache_for_id_i(st_data_t ic, st_data_t arg)
 void
 rb_clear_constant_cache_for_id(ID id)
 {
+    rb_vm_mutation_epoch_bump();
     VALUE lookup_result;
     rb_vm_t *vm = GET_VM();
 
@@ -368,6 +370,7 @@ invalidate_method_cache_in_cc_table(VALUE tbl, ID mid)
     VALUE ccs_data;
     if (tbl && rb_managed_id_table_lookup(tbl, mid, &ccs_data)) {
         struct rb_class_cc_entries *ccs = (struct rb_class_cc_entries *)ccs_data;
+        rb_vm_mutation_epoch_bump();
         rb_yjit_cme_invalidate((rb_callable_method_entry_t *)ccs->cme);
         rb_zjit_cme_invalidate((rb_callable_method_entry_t *)ccs->cme);
         if (NIL_P(ccs->cme->owner)) invalidate_negative_cache(mid);
@@ -382,6 +385,7 @@ invalidate_callable_method_entry_in_callable_m_table(struct rb_id_table *tbl, ID
 {
     VALUE cme;
     if (tbl && rb_id_table_lookup(tbl, mid, &cme)) {
+        rb_vm_mutation_epoch_bump();
         rb_yjit_cme_invalidate((rb_callable_method_entry_t *)cme);
         rb_zjit_cme_invalidate((rb_callable_method_entry_t *)cme);
         rb_id_table_delete(tbl, mid);
@@ -451,6 +455,7 @@ invalidate_complemented_method_entry_in_callable_m_table(struct rb_id_table *tbl
 {
     VALUE cme;
     if (tbl && rb_id_table_lookup(tbl, mid, &cme)) {
+        rb_vm_mutation_epoch_bump();
         rb_yjit_cme_invalidate((rb_callable_method_entry_t *)cme);
         rb_zjit_cme_invalidate((rb_callable_method_entry_t *)cme);
         rb_id_table_delete(tbl, mid);
@@ -600,6 +605,7 @@ clear_iclass_method_cache_by_id_for_refinements(VALUE klass, VALUE d)
 void
 rb_clear_method_cache(VALUE klass_or_module, ID mid)
 {
+    rb_vm_mutation_epoch_bump();
     if (RB_TYPE_P(klass_or_module, T_MODULE)) {
         VALUE module = klass_or_module; // alias
 
@@ -847,6 +853,7 @@ rb_vm_insert_cc_refinement(const struct rb_callcache *cc)
 void
 rb_clear_all_refinement_method_cache(void)
 {
+    rb_vm_mutation_epoch_bump();
     rb_vm_t *vm = GET_VM();
 
     RB_VM_LOCK_ENTER();
@@ -891,6 +898,7 @@ rb_method_table_insert0(VALUE klass, struct rb_id_table *table, ID method_id, co
     VM_ASSERT_TYPE3(table_owner, T_CLASS, T_ICLASS, T_MODULE);
     rb_id_table_insert(table, method_id, (VALUE)me);
     RB_OBJ_WRITTEN(table_owner, Qundef, (VALUE)me);
+    rb_vm_mutation_epoch_bump();
 }
 
 // rb_f_notimplement has an extra trailing argument to distinguish it from other methods
@@ -2336,6 +2344,7 @@ remove_method(VALUE klass, ID mid)
     }
     rb_clear_method_cache(klass, mid);
     rb_id_table_delete(RCLASS_WRITABLE_M_TBL(klass), mid);
+    rb_vm_mutation_epoch_bump();
 
     rb_vm_check_redefinition_opt_method(me, klass);
 

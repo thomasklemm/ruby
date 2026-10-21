@@ -1359,6 +1359,7 @@ make_metaclass(VALUE klass)
     // Full class ancestry may not have been filled until we reach here.
     rb_class_update_superclasses(METACLASS_OF(metaclass));
 
+    rb_vm_mutation_epoch_bump();
     return metaclass;
 }
 
@@ -1395,6 +1396,7 @@ make_singleton_class(VALUE obj)
     rb_zjit_invalidate_no_singleton_class(orig_class);
 
     SET_METACLASS_OF(klass, METACLASS_OF(rb_class_real(orig_class)));
+    rb_vm_mutation_epoch_bump();
     return klass;
 }
 
@@ -1774,6 +1776,7 @@ rb_include_module(VALUE klass, VALUE module)
     int changed = 0;
 
     ensure_includable(klass, module);
+    rb_vm_mutation_epoch_bump();
 
     changed = include_modules_at(klass, RCLASS_ORIGIN(klass), module, TRUE);
     if (changed < 0)
@@ -1810,6 +1813,7 @@ rb_include_module(VALUE klass, VALUE module)
             }
         }
     }
+    rb_vm_mutation_epoch_bump();
 }
 
 static enum rb_id_table_iterator_result
@@ -2037,6 +2041,7 @@ rb_prepend_module(VALUE klass, VALUE module)
     if (module_in_super_chain(klass, module))
         rb_raise(rb_eArgError, "cyclic prepend detected");
 
+    rb_vm_mutation_epoch_bump();
     klass_had_no_origin = ensure_origin(klass);
     changed = do_include_modules_at(klass, klass, module, FALSE, false);
     RUBY_ASSERT(changed >= 0); // already checked for cyclic prepend above
@@ -2083,6 +2088,7 @@ rb_prepend_module(VALUE klass, VALUE module)
             RB_GC_GUARD(new_origins);
         }
     }
+    rb_vm_mutation_epoch_bump();
 }
 
 /*
