@@ -637,6 +637,7 @@ cancel_single_ractor_mode(void)
     // enable multi-ractor mode
     RUBY_DEBUG_LOG("enable multi-ractor mode");
 
+    rb_vm_epoch_tokens_disable();
     ruby_single_main_ractor = NULL;
     rb_yjit_invalidate_single_ractor();
     rb_zjit_invalidate_single_ractor();

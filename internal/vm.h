@@ -47,7 +47,7 @@ VALUE rb_vm_push_frame_fname(struct rb_execution_context_struct *ec, VALUE fname
 /* vm.c */
 /* Experimental conservative code-mutation generation; not a public API. */
 void rb_vm_mutation_epoch_bump(void);
-struct rb_callable_method_entry_struct;
+void rb_vm_epoch_tokens_disable(void);
 void rb_vm_epoch_token_revoke(const struct rb_callable_method_entry_struct *cme);
 VALUE rb_obj_is_thread(VALUE obj);
 void rb_vm_mark(void *ptr);

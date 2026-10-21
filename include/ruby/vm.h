@@ -15,8 +15,8 @@
  * we now have Ractor.  This file is kind of obsolescent.
  */
 #include "ruby/internal/dllexport.h"
+#include "ruby/internal/stdbool.h"
 #include "ruby/internal/value.h"
-#include "ruby/internal/value_type.h"
 
 RBIMPL_SYMBOL_EXPORT_BEGIN()
 
@@ -59,17 +59,23 @@ void ruby_vm_at_exit(void(*func)(ruby_vm_t *));
 bool ruby_free_at_exit_p(void);
 
 /**
- * Experimental same-main-Ractor method lookup assumption. klass must be a
+ * Experimental single-Ractor method lookup assumption. klass must be a
  * Class (including an already existing singleton class). Returns nil for a
- * missing or refined entry. The token retains its class and entry until GC.
- * No Ruby callback or method_missing is invoked. Requires the GVL.
+ * missing or refined entry, or once the process enters multi-Ractor mode.
+ * The token retains and pins its class and entry until GC. It does not track
+ * callees or super. No target or method_missing callback is invoked.
+ * Requires the GVL. When enabled, TypeError is raised for an invalid klass.
  * Consumers must independently guard receiver class, lexical scope, mutable
  * data and every boundary that can run Ruby; this is not an execution lock.
+ * This research API has no compatibility guarantee.
  */
 VALUE rb_vm_method_token(VALUE klass, ID mid);
 
 /** Check a token returned above. Revocation is permanent and conservative.
- * Requires the GVL in the main Ractor. No allocation or Ruby callback.
+ * Requires the GVL. Always returns false once multi-Ractor mode is entered.
+ * This restriction survives fork, even when the child has only one Ractor.
+ * For a valid token argument, no allocation or Ruby callback is performed.
+ * An invalid argument raises TypeError while tokens are enabled.
  */
 int rb_vm_method_token_valid_p(VALUE token);
 
