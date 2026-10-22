@@ -50,13 +50,22 @@ escaped_length(VALUE str)
 static VALUE
 optimized_escape_html(VALUE str)
 {
-    VALUE escaped;
-    VALUE vbuf;
-    char *buf = ALLOCV_N(char, vbuf, escaped_length(str));
-    const char *cstr = RSTRING_PTR(str);
-    const char *end = cstr + RSTRING_LEN(str);
+    const rb_len_t capacity = escaped_length(str);
+    const rb_len_t length = RSTRING_LEN(str);
+    rb_len_t beg = 0;
+    const unsigned char *ptr = (const unsigned char *)RSTRING_PTR(str);
+    while (beg < length && !html_escape_table[ptr[beg]].len) {
+        beg++;
+    }
+    if (beg == length) return rb_str_dup(str);
 
-    char *dest = buf;
+    VALUE vbuf;
+    char *buf = ALLOCV_N(char, vbuf, capacity);
+    const char *cstr = RSTRING_PTR(str) + beg;
+    const char *end = RSTRING_PTR(str) + length;
+
+    memcpy(buf, RSTRING_PTR(str), beg);
+    char *dest = buf + beg;
     while (cstr < end) {
         const unsigned char c = *cstr++;
         uint8_t len = html_escape_table[c].len;
@@ -69,13 +78,8 @@ optimized_escape_html(VALUE str)
         }
     }
 
-    if (RSTRING_LEN(str) < (dest - buf)) {
-        escaped = rb_str_new(buf, dest - buf);
-        preserve_original_state(str, escaped);
-    }
-    else {
-        escaped = rb_str_dup(str);
-    }
+    VALUE escaped = rb_str_new(buf, dest - buf);
+    preserve_original_state(str, escaped);
     ALLOCV_END(vbuf);
     return escaped;
 }

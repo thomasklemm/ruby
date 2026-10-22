@@ -137,6 +137,19 @@ class CGIEscapeTest < Test::Unit::TestCase
     assert_not_same(orig, str)
   end
 
+  def test_cgi_escape_html_safe_prefix
+    [0, 1, 57, 1024].each do |size|
+      prefix = ("a\0\u3042" * size).freeze
+      str = CGI.escapeHTML(prefix)
+      assert_equal(prefix, str)
+      assert_equal(prefix.encoding, str.encoding)
+      assert_not_same(prefix, str)
+      assert_not_predicate(str, :frozen?)
+      assert_equal(prefix + "&lt;&amp;&#39;&quot;&gt;tail",
+                   CGI.escapeHTML(prefix + "<&'\">tail"))
+    end
+  end
+
   def assert_cgi_escape_html_preserve_encoding(str, encoding)
     assert_equal(encoding, CGI.escapeHTML(str.dup.force_encoding(encoding)).encoding)
   end
