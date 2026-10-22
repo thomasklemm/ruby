@@ -2765,7 +2765,12 @@ fn can_direct_send(iseq: *const rb_iseq_t, caller_args: &CallerArguments, has_bl
                                        { count_failure(complex_arg_pass_param_forwardable) }
     if callee_has_block_param && caller_passes_block_arg
                                        { count_failure(complex_arg_pass_param_block) }
-    if 0 != params.flags.has_kwrest()  { count_failure(complex_arg_pass_param_kwrest) }
+    // First support kwrest-only callees with no caller keywords. Named keyword
+    // parameters need the hidden bits slot preserved; anonymous positional rest
+    // needs the VM's shared empty-array representation, not RestArray packing.
+    if 0 != params.flags.has_kwrest() &&
+        (caller_args.kwarg_count != 0 || params.flags.has_kw() != 0 || params.flags.anon_rest() != 0)
+                                       { count_failure(complex_arg_pass_param_kwrest) }
 
     // If the caller passes a block (literal or &block), we need to fall back to the
     // interpreter for two cases it handles that we don't:
@@ -2867,7 +2872,7 @@ fn can_direct_send(iseq: *const rb_iseq_t, caller_args: &CallerArguments, has_bl
     // Without *rest, use the converted positional count so the synthesized
     // keyword Hash is included in the SendDirect argument count.
     let send_positional_argc = if has_rest { min_positional as usize + passed_opt_num + 1 } else { effective_positional };
-    let send_argc = send_positional_argc + kw_total_num as usize;
+    let send_argc = send_positional_argc + kw_total_num as usize + usize::from(params.flags.has_kwrest() != 0);
 
     // IseqCall stores the JIT entry index and argc as u16.
     if u16::try_from(send_argc).is_err() {
@@ -4445,6 +4450,16 @@ impl Function {
 
         // Replace the keyword arguments with the reordered ones.
         processed_args.extend(reordered_kw_args);
+        let params = unsafe { iseq.params() };
+        if params.flags.has_kwrest() != 0 {
+            // Match args_setup_kw_rest_parameter: anonymous ** keeps nil when
+            // no keywords were passed; named **rest gets a fresh mutable Hash.
+            processed_args.push(if params.flags.anon_kwrest() != 0 {
+                SendDirectArg::Constant(Qnil)
+            } else {
+                SendDirectArg::KeywordHash(vec![])
+            });
+        }
         Ok((processed_args, kw_bits))
     }
 
@@ -4470,7 +4485,7 @@ impl Function {
         let lead_num = params.lead_num as usize;
         let opt_num = params.opt_num as usize;
         let post_num = params.post_num as usize;
-        let kw_num = callee_kw_num(iseq);
+        let kw_num = callee_kw_num(iseq) + usize::from(params.flags.has_kwrest() != 0);
 
         let positional_argc = args.len().checked_sub(kw_num).ok_or(ArgcParamMismatch)?;
         let min_positional_argc = lead_num + post_num;
