@@ -64,18 +64,26 @@ optimized_escape_html(VALUE str)
     const char *cstr = RSTRING_PTR(str) + beg;
     const char *end = RSTRING_PTR(str) + length;
 
-    memcpy(buf, RSTRING_PTR(str), beg);
-    char *dest = buf + beg;
+    const char *segment_start = RSTRING_PTR(str);
+    char *dest = buf;
     while (cstr < end) {
         const unsigned char c = *cstr++;
         uint8_t len = html_escape_table[c].len;
         if (len) {
+            size_t segment_len = cstr - segment_start - 1;
+            if (segment_len) {
+                memcpy(dest, segment_start, segment_len);
+                dest += segment_len;
+            }
             memcpy(dest, html_escape_table[c].str, len);
             dest += len;
+            segment_start = cstr;
         }
-        else {
-            *dest++ = c;
-        }
+    }
+    size_t segment_len = cstr - segment_start;
+    if (segment_len) {
+        memcpy(dest, segment_start, segment_len);
+        dest += segment_len;
     }
 
     VALUE escaped = rb_str_new(buf, dest - buf);
