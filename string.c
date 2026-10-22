@@ -2139,6 +2139,10 @@ rb_str_with_debug_created_info(VALUE str, VALUE path, int line)
 static VALUE
 rb_str_init(int argc, VALUE *argv, VALUE str)
 {
+    if (argc == 1 && !rb_keyword_given_p()) {
+        return rb_str_replace(str, argv[0]);
+    }
+
     static ID keyword_ids[2];
     VALUE orig, opt, venc, vcapa;
     VALUE kwargs[2];

@@ -1,0 +1,10 @@
+prelude: |
+  class BenchmarkString < String
+  end
+  short = "article_title".freeze
+  long = ("a" * 2048).freeze
+benchmark:
+  string_short: String.new(short)
+  subclass_short: BenchmarkString.new(short)
+  subclass_long: BenchmarkString.new(long)
+  subclass_keywords: BenchmarkString.new(short, encoding: "UTF-8")
