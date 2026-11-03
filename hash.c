@@ -3262,6 +3262,15 @@ rb_hash_aset(VALUE hash, VALUE key, VALUE val)
  *  Related: see {Methods for Assigning}[rdoc-ref:Hash@Methods+for+Assigning].
  */
 
+static VALUE rb_hash_replace(VALUE hash, VALUE hash2);
+
+/* Hash#initialize_copy, named so that ZJIT's Kernel#dup fast path can identify it. */
+VALUE
+rb_jit_hash_initialize_copy(VALUE hash, VALUE orig)
+{
+    return rb_hash_replace(hash, orig);
+}
+
 static VALUE
 rb_hash_replace(VALUE hash, VALUE hash2)
 {
@@ -7718,7 +7727,7 @@ Init_Hash(void)
     rb_define_singleton_method(rb_cHash, "new", rb_hash_s_new, -1);
     rb_define_singleton_method(rb_cHash, "[]", rb_hash_s_create, -1);
     rb_define_singleton_method(rb_cHash, "try_convert", rb_hash_s_try_convert, 1);
-    rb_define_method(rb_cHash, "initialize_copy", rb_hash_replace, 1);
+    rb_define_method(rb_cHash, "initialize_copy", rb_jit_hash_initialize_copy, 1);
     rb_define_method(rb_cHash, "rehash", rb_hash_rehash, 0);
     rb_define_method(rb_cHash, "freeze", rb_hash_freeze, 0);
 

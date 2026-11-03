@@ -5468,6 +5468,25 @@ impl Function {
                                             }
                                         }
 
+                                        // Kernel#dup with builtin copy hooks: call the copy hook directly
+                                        // (measurement prototype). Guard both hook lookups.
+                                        let mut cfunc_ptr = cfunc_ptr;
+                                        if blockiseq.is_none() {
+                                            unsafe extern "C" {
+                                                fn rb_jit_obj_dup_func(dup_cme: *const rb_callable_method_entry_t, klass: VALUE,
+                                                    init_dup: *mut *const rb_callable_method_entry_t, init_copy: *mut *const rb_callable_method_entry_t) -> *mut u8;
+                                            }
+                                            let (mut init_dup, mut init_copy) = (ptr::null(), ptr::null());
+                                            let fast = unsafe { rb_jit_obj_dup_func(cme, recv_class, &mut init_dup, &mut init_copy) };
+                                            if !fast.is_null() {
+                                                for hook in [init_dup, init_copy] {
+                                                    let method = unsafe { (*hook).called_id };
+                                                    fun.push_insn(block, Insn::PatchPoint { invariant: Invariant::MethodRedefined { klass: recv_class, method, cme: hook }, state });
+                                                }
+                                                cfunc_ptr = fast.cast();
+                                            }
+                                        }
+
                                         // Emit a call
                                         if get_option!(stats) {
                                             fun.count_not_inlined_cfunc(block, cme);

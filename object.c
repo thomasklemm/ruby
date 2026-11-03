@@ -556,41 +556,66 @@ rb_obj_clone(VALUE obj)
 }
 
 /*
- * Whether +cme+ is the boot-time C definition of a copy hook owned by +owner+.
- * A redefinition, a prepended or included override, or a refinement resolves
- * to another method entry, which is not basic or has another owner.
+ * ZJIT fast path for Kernel#dup (measurement prototype). ZJIT calls one of
+ * these instead of rb_obj_dup when the receiver's class resolves
+ * initialize_dup to Kernel's and initialize_copy to the C method named by the
+ * helper, and guards both lookups with method-redefinition patch points. The
+ * copy hook is called directly, without the two rb_funcall frames. With C
+ * call/return hooks enabled the hooks are called as methods, as rb_obj_dup does.
  */
-static inline bool
-dup_builtin_hook_p(const rb_callable_method_entry_t *cme, VALUE owner)
+static inline VALUE
+jit_obj_dup_with(VALUE obj, VALUE (*copy)(VALUE, VALUE))
 {
-    return cme && cme->owner == owner && METHOD_ENTRY_BASIC(cme) &&
-        cme->def->type == VM_METHOD_TYPE_CFUNC && cme->def->body.cfunc.argc == 1;
+    if (special_object_p(obj)) return obj;
+    VALUE dup = OBJ_BUILTIN_TYPE(obj) == T_HASH ? rb_hash_alloc_copy(rb_obj_class(obj), obj) : rb_obj_alloc(rb_obj_class(obj));
+    init_copy(dup, obj);
+    if (UNLIKELY(ruby_vm_c_events_enabled > 0)) {
+        rb_funcall(dup, id_init_dup, 1, obj);
+    }
+    else {
+        copy(dup, obj);
+    }
+    return dup;
+}
+
+VALUE rb_jit_hash_initialize_copy(VALUE hash, VALUE orig);
+VALUE rb_obj_init_dup_clone(VALUE obj, VALUE orig);
+static VALUE jit_obj_dup_kernel_copy(VALUE obj) { return jit_obj_dup_with(obj, rb_obj_init_copy); }
+static VALUE jit_obj_dup_hash_copy(VALUE obj) { return jit_obj_dup_with(obj, rb_jit_hash_initialize_copy); }
+static VALUE jit_obj_dup_ary_copy(VALUE obj) { return jit_obj_dup_with(obj, rb_ary_replace); }
+
+static inline bool
+jit_builtin_hook_p(const rb_callable_method_entry_t *cme, VALUE owner, VALUE (*func)(VALUE, VALUE))
+{
+    return cme && cme->owner == owner && METHOD_ENTRY_BASIC(cme) && cme->def->type == VM_METHOD_TYPE_CFUNC &&
+        cme->def->body.cfunc.argc == 1 && cme->def->body.cfunc.func == (rb_cfunc_t)func;
+}
+
+/*
+ * Return the function ZJIT may call for +dup_cme+ on instances of +klass+, or
+ * NULL. Stores the initialize_dup and initialize_copy entries the caller must
+ * guard with patch points.
+ */
+void *
+rb_jit_obj_dup_func(const rb_callable_method_entry_t *dup_cme, VALUE klass,
+                    const rb_callable_method_entry_t **init_dup, const rb_callable_method_entry_t **init_copy)
+{
+    if (!(dup_cme && dup_cme->owner == rb_mKernel && METHOD_ENTRY_BASIC(dup_cme) &&
+          dup_cme->def->type == VM_METHOD_TYPE_CFUNC && dup_cme->def->body.cfunc.func == (rb_cfunc_t)rb_obj_dup)) return NULL;
+    if (!RB_TYPE_P(klass, T_CLASS) || RCLASS_SINGLETON_P(klass)) return NULL;
+    *init_dup = rb_callable_method_entry(klass, id_init_dup);
+    *init_copy = rb_callable_method_entry(klass, id_init_copy);
+    if (!jit_builtin_hook_p(*init_dup, rb_mKernel, rb_obj_init_dup_clone)) return NULL;
+    if (jit_builtin_hook_p(*init_copy, rb_mKernel, rb_obj_init_copy)) return (void *)jit_obj_dup_kernel_copy;
+    if (jit_builtin_hook_p(*init_copy, rb_cHash, rb_jit_hash_initialize_copy)) return (void *)jit_obj_dup_hash_copy;
+    if (jit_builtin_hook_p(*init_copy, rb_cArray, rb_ary_replace)) return (void *)jit_obj_dup_ary_copy;
+    return NULL;
 }
 
 VALUE
 rb_obj_dup_setup(VALUE obj, VALUE dup)
 {
     init_copy(dup, obj);
-
-    /*
-     * The default initialize_dup only calls initialize_copy. When both hooks
-     * are the builtin definitions and initialize_copy is Kernel's, Hash's or
-     * Array's, call initialize_copy's C function directly: none of them calls
-     * Ruby code or raises for an unfrozen copy of the same class, so only the
-     * two method frames are skipped. With C call/return hooks enabled, call
-     * the hooks as methods so that TracePoint sees them.
-     */
-    if (LIKELY(ruby_vm_c_events_enabled == 0)) {
-        VALUE klass = RBASIC_CLASS(dup);
-        const rb_callable_method_entry_t *copy;
-        if (dup_builtin_hook_p(rb_callable_method_entry(klass, id_init_dup), rb_mKernel) &&
-            (copy = rb_callable_method_entry(klass, id_init_copy)) &&
-            (dup_builtin_hook_p(copy, rb_mKernel) || dup_builtin_hook_p(copy, rb_cHash) ||
-             dup_builtin_hook_p(copy, rb_cArray))) {
-            ((VALUE (*)(VALUE, VALUE))copy->def->body.cfunc.func)(dup, obj);
-            return dup;
-        }
-    }
     rb_funcall(dup, id_init_dup, 1, obj);
 
     return dup;
