@@ -1495,6 +1495,7 @@ pm_compile_hash_elements(rb_iseq_t *iseq, const pm_node_t *node, const pm_node_l
             PUSH_SEQ(ret, anchor);                                                                \
             PUSH_INSN1(ret, location, newhash, INT2FIX(stack_length));                            \
             first_chunk = false;                                                                  \
+            owned_hash = true;                                                                    \
         }                                                                                         \
         else {                                                                                    \
             PUSH_INSN1(ret, location, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));       \
@@ -1733,7 +1734,7 @@ pm_setup_args_core(const pm_arguments_node_t *arguments_node, const pm_node_t *b
                         PUSH_INSN1(ret, location, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));
                         PUSH_INSN1(ret, location, newhash, INT2FIX(0));
                         pm_compile_hash_elements(iseq, argument, elements, 0, Qundef, true, ret, scope_node);
-                        PUSH_SEND(ret, location, id_core_hash_merge_kwd, INT2FIX(2));
+                        PUSH_SEND(ret, location, id_core_hash_merge_bang_kwd, INT2FIX(2));
                     }
                     else {
                         pm_compile_hash_elements(iseq, argument, elements, 0, Qundef, true, ret, scope_node);
@@ -8222,7 +8223,7 @@ pm_compile_forwarding_super_node(rb_iseq_t *iseq, const pm_forwarding_super_node
             PUSH_GETLOCAL(args, *location, idx, depth);
         }
 
-        PUSH_SEND(args, *location, id_core_hash_merge_ptr, INT2FIX(i * 2 + 1));
+        PUSH_SEND(args, *location, id_core_hash_merge_bang_ptr, INT2FIX(i * 2 + 1));
         flag |= VM_CALL_KW_SPLAT| VM_CALL_KW_SPLAT_MUT;
     }
     else if (local_body->param.flags.has_kwrest) {

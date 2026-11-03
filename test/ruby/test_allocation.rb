@@ -306,6 +306,7 @@ class TestAllocation < Test::Unit::TestCase
         check_allocations(0, 1, "keyword_splat(a: 2#{block})")
         check_allocations(0, 1, "keyword_splat(*empty_array, a: 2#{block})")
         check_allocations(0, 1, "keyword_splat(a:2, **empty_hash#{block})")
+        check_allocations(0, 1, "keyword_splat(a: nill, **empty_hash#{block})")
         check_allocations(0, 1, "keyword_splat(**empty_hash, a: 2#{block})")
 
         check_allocations(0, 1, "keyword_splat(**nil#{block})")
@@ -334,6 +335,7 @@ class TestAllocation < Test::Unit::TestCase
         check_allocations(0, 1, "keyword_and_keyword_splat(a: 2#{block})")
         check_allocations(0, 1, "keyword_and_keyword_splat(*empty_array, a: 2#{block})")
         check_allocations(0, 1, "keyword_and_keyword_splat(a:2, **empty_hash#{block})")
+        check_allocations(0, 1, "keyword_and_keyword_splat(a: nill, **empty_hash#{block})")
         check_allocations(0, 1, "keyword_and_keyword_splat(**empty_hash, a: 2#{block})")
 
         check_allocations(0, 1, "keyword_and_keyword_splat(**nil#{block})")

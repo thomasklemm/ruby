@@ -5462,11 +5462,19 @@ rb_hash_new_with_bulk_insert(rb_len_t argc, const VALUE *argv)
     return hash_new_with_bulk_insert(rb_cHash, argc, argv);
 }
 
+// Merging in place into an owned ar_table that cannot hold the result would
+// convert it to an st_table; a right-sized copy is cheaper.
+static inline bool
+hash_merge_overflows_p(VALUE hash, size_t added)
+{
+    return RHASH_AR_TABLE_P(hash) && RHASH_SIZE(hash) + added > RHASH_AR_TABLE_MAX_BOUND(hash);
+}
+
 VALUE
 rb_hash_merge2_bulk(VALUE hash, rb_len_t argc, const VALUE *argv, bool dup)
 {
     VALUE val = hash;
-    if (dup) {
+    if (dup || hash_merge_overflows_p(val, argc / 2)) {
         // This is used to build literal hashes and keyword arguments,
         // we can assume duplicate keys are very rare.
         val = hash_dup_capa(val, RHASH_SIZE(val) + argc / 2);
@@ -5479,7 +5487,7 @@ VALUE
 rb_hash_merge2(VALUE h1, VALUE h2, bool dup)
 {
     VALUE val = h1;
-    if (dup) {
+    if (dup || hash_merge_overflows_p(val, RHASH_SIZE(h2))) {
         // This is used to build literal hashes and keyword arguments,
         // we can assume duplicate keys are very rare.
         val = hash_dup_capa(val, RHASH_SIZE(val) + RHASH_SIZE(h2));
