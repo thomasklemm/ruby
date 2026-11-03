@@ -2277,6 +2277,67 @@ fn test_send_proc_subclass_block_arg_falls_back() {
 }
 
 #[test]
+fn test_send_block_param_proxy() {
+    assert_snapshot!(inspect("
+        def foo = [block_given?, yield(3)]
+        def take(&blk) = blk
+        def test(&b) = [foo(&b), take(&b).call(4), [5].map { foo(&b) }]
+        test { _1 * 2 }
+        test { _1 * 2 }
+    "), @"[[true, 6], 8, [[true, 6]]]");
+}
+
+#[test]
+fn test_send_block_param_proxy_ifunc() {
+    assert_snapshot!(assert_compiles("
+        class C
+          include Enumerable
+          def each(&b) = [1, 2].each(&b)
+        end
+        def test = C.new.map { _1 * 2 }
+        test
+        test
+    "), @"[2, 4]");
+}
+
+#[test]
+fn test_send_block_param_proxy_side_exit() {
+    assert_snapshot!(inspect("
+        def foo = block_given?
+        def test(&b) = foo(&b)
+        test {}
+        test {}
+        [test {}, test, test(&proc {}), test(&:to_s)]
+    "), @"[true, false, true, true]");
+}
+
+#[test]
+fn test_send_block_param_proxy_method_object_and_tracepoint() {
+    assert_snapshot!(inspect("
+        def foo = yield(3)
+        def test(&b) = foo(&b)
+        test { _1 }
+        test { _1 }
+        calls = []
+        tp = TracePoint.new(:call) { calls << _1.method_id }
+        result = tp.enable { [test { _1 + 1 }, test(&4.method(:+))] }
+        [result, calls]
+    "), @"[[4, 7], [:test, :foo, :test, :foo]]");
+}
+
+#[test]
+fn test_send_block_param_proxy_break() {
+    assert_snapshot!(inspect("
+        M = Monitor.new
+        def test(&b) = M.synchronize(&b)
+        def run = test { break 42 }
+        run
+        run
+        [run, M.mon_locked?]
+    "), @"[42, false]");
+}
+
+#[test]
 fn test_send_symbol_block_arg() {
     assert_snapshot!(inspect("
         def test = [1, 2].map(&:to_s)

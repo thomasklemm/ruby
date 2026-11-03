@@ -12705,7 +12705,7 @@ mod hir_opt_tests {
     }
 
     #[test]
-    fn test_do_not_optimize_send_with_block_forwarding() {
+    fn test_optimize_send_with_block_forwarding() {
         eval(r#"
             def test(&block) = [].map(&block)
             test { |x| x }; test { |x| x }
@@ -12768,10 +12768,15 @@ mod hir_opt_tests {
           v49:BasicObject = LoadField v18, :VM_ENV_DATA_INDEX_SPECVAL@0x1003
           Jump bb6(v49, v10)
         bb6(v16:BasicObject, v17:BasicObject):
-          v52:BasicObject = Send v14, &block, :map, v16 # SendFallbackReason: Send: block argument is not nil
+          v60:ObjectSubclass[BlockParamProxy] = GuardBitEquals v16, Value(VALUE(0x1008)) recompile
+          v61:CPtr = GetEP 0
+          v62:CInt64 = LoadField v61, :VM_ENV_DATA_INDEX_SPECVAL@0x1003
+          PatchPoint NoSingletonClass(Array@0x1010)
+          PatchPoint MethodRedefined(Array@0x1010, map@0x1018, cme:0x1020)
+          v67:BasicObject = SendDirect v14, &v62, :map (0x1048)
           PatchPoint NoEPEscape(test)
           CheckInterrupts
-          Return v52
+          Return v67
         ");
     }
 
@@ -19039,7 +19044,7 @@ mod hir_opt_tests {
         // profiled operand types. Without the fix, the receiver type would be mapped to the
         // wrong stack slot, causing resolve_receiver_type to return NoProfile.
         // With the fix, the receiver type is correctly resolved and the send gets past type
-        // resolution to hit the ARGS_BLOCKARG guard (ComplexArgPass) instead of NoProfile.
+        // resolution instead of hitting NoProfile.
         eval("
             def test(&block) = [].map(&block)
             test { |x| x }; test { |x| x }
@@ -19102,10 +19107,15 @@ mod hir_opt_tests {
           v49:BasicObject = LoadField v18, :VM_ENV_DATA_INDEX_SPECVAL@0x1003
           Jump bb6(v49, v10)
         bb6(v16:BasicObject, v17:BasicObject):
-          v52:BasicObject = Send v14, &block, :map, v16 # SendFallbackReason: Send: block argument is not nil
+          v60:ObjectSubclass[BlockParamProxy] = GuardBitEquals v16, Value(VALUE(0x1008)) recompile
+          v61:CPtr = GetEP 0
+          v62:CInt64 = LoadField v61, :VM_ENV_DATA_INDEX_SPECVAL@0x1003
+          PatchPoint NoSingletonClass(Array@0x1010)
+          PatchPoint MethodRedefined(Array@0x1010, map@0x1018, cme:0x1020)
+          v67:BasicObject = SendDirect v14, &v62, :map (0x1048)
           PatchPoint NoEPEscape(test)
           CheckInterrupts
-          Return v52
+          Return v67
         ");
     }
 
@@ -27222,12 +27232,16 @@ mod hir_opt_tests {
           v69:BasicObject = LoadField v38, :VM_ENV_DATA_INDEX_SPECVAL@0x1082
           Jump bb8(v69, v78)
         bb8(v36:BasicObject, v37:BasicObject):
-          v72:BasicObject = Send v25, &block, :inner, v10, v36 # SendFallbackReason: Send: block argument is not nil
+          v83:ObjectSubclass[BlockParamProxy] = GuardBitEquals v36, Value(VALUE(0x1088)) recompile
+          v84:CPtr = GetEP 0
+          v85:CInt64 = LoadField v84, :VM_ENV_DATA_INDEX_SPECVAL@0x1082
+          PatchPoint MethodRedefined(Object@0x1008, inner@0x1090, cme:0x1098)
+          v89:BasicObject = SendDirect v25, &v85, :inner (0x10c0), v10
           PatchPoint NoEPEscape(callee)
           PopInlineFrame
           PatchPoint NoEPEscape(test)
           CheckInterrupts
-          Return v72
+          Return v89
         ");
     }
 

@@ -634,6 +634,7 @@ pub enum SideExitReason {
     UnhandledCallType(CallType),
     UnhandledBlockArg,
     BlockArgNotNil,
+    BlockArgNotBlockParamProxy,
     TooManyKeywordParameters,
     FixnumAddOverflow,
     FixnumSubOverflow,
@@ -896,6 +897,9 @@ pub enum BlockHandler {
     /// guarded Proc value, which becomes the callee frame's block handler
     /// (a Proc VALUE is itself a valid block handler).
     BlockArgProc(InsnId),
+    /// Block arg proven to be the block param proxy by a guard. The InsnId refers to
+    /// the caller's block handler, which becomes the callee frame's block handler.
+    BlockParamProxy(InsnId),
 }
 
 /// Identifier used by LoadField/StoreField/LoadArg for HIR dumps. Variants
@@ -1653,7 +1657,7 @@ macro_rules! for_each_operand_impl {
             Insn::SendDirect(insn) => {
                 $visit_one!(insn.recv);
                 $visit_many!(insn.args);
-                if let Some(BlockHandler::BlockArgProc(id)) = &$($mut)? insn.block {
+                if let Some(BlockHandler::BlockArgProc(id) | BlockHandler::BlockParamProxy(id)) = &$($mut)? insn.block {
                     $visit_one!(*id);
                 }
                 $visit_one!(insn.state);
@@ -2071,7 +2075,7 @@ impl<'a> InsnPrinter<'a> {
 
     fn block_handler(&self, block: &BlockHandler) -> String {
         match block {
-            BlockHandler::BlockArgProc(proc_id) => format!("&{proc_id}"),
+            BlockHandler::BlockArgProc(proc_id) | BlockHandler::BlockParamProxy(proc_id) => format!("&{proc_id}"),
             BlockHandler::BlockIseq(blockiseq) => format!("{:p}", self.ptr_map.map_ptr(*blockiseq)),
             BlockHandler::BlockArg => "&block".to_string(),
         }
@@ -2333,8 +2337,8 @@ impl<'a> std::fmt::Display for InsnPrinter<'a> {
                         write!(f, "Send {recv}, {:p}, :{}", self.ptr_map.map_ptr(blockiseq), ruby_call_method_name(*cd))?,
                     Some(BlockHandler::BlockArg) =>
                         write!(f, "Send {recv}, &block, :{}", ruby_call_method_name(*cd))?,
-                    Some(BlockHandler::BlockArgProc(_)) =>
-                        unreachable!("BlockArgProc is not sent through Send"),
+                    Some(BlockHandler::BlockArgProc(_) | BlockHandler::BlockParamProxy(_)) =>
+                        unreachable!("BlockArgProc and BlockParamProxy are not sent through Send"),
                     None =>
                         write!(f, "Send {recv}, :{}", ruby_call_method_name(*cd))?,
                 }
@@ -5106,8 +5110,28 @@ impl Function {
                                     stripped_block_arg = true;
                                     let new_state = self.frame_state(state).with_replaced_args(&args, original_argc);
                                     send_frame_state = self.push_insn(block, Insn::Snapshot { state: Box::new(new_state) });
+                                } else if matches!(
+                                    self.resolve_receiver_type_from_profile(block_arg, state),
+                                    ReceiverTypeResolution::Monomorphic { profiled_type } if profiled_type.class() == unsafe { rb_block_param_proxy }.class_of()
+                                ) {
+                                    // `def foo(&b) = bar(&b)`: vm_caller_setup_arg_block() passes
+                                    // VM_CF_BLOCK_HANDLER(cfp) for the block param proxy.
+                                    self.push_insn(block, Insn::GuardBitEquals {
+                                        val: block_arg,
+                                        expected: Const::Value(unsafe { rb_block_param_proxy }),
+                                        reason: Box::new(SideExitReason::BlockArgNotBlockParamProxy),
+                                        state,
+                                        recompile: Some(Recompile),
+                                    });
+                                    let lep = self.get_ep(block, get_lvar_level(self.frame_state(state).iseq));
+                                    let block_handler = self.load_ep_env_field(block, lep, FieldName::VM_ENV_DATA_INDEX_SPECVAL, VM_ENV_DATA_INDEX_SPECVAL, types::CInt64);
+                                    _ = args.pop();
+                                    send_block = Some(BlockHandler::BlockParamProxy(block_handler));
+                                    stripped_block_arg = true;
+                                    let new_state = self.frame_state(state).with_replaced_args(&args, original_argc);
+                                    send_frame_state = self.push_insn(block, Insn::Snapshot { state: Box::new(new_state) });
                                 } else {
-                                    // Can't prove block arg is nil or a Proc
+                                    // Can't prove block arg is nil, a Proc, or the block param proxy
                                     self.set_dynamic_send_reason(insn_id, SendBlockArgNotNil);
                                     self.push_insn_id(block, insn_id); continue;
                                 }
@@ -5392,7 +5416,7 @@ impl Function {
 
                                 let blockiseq = match send_block {
                                     Some(BlockHandler::BlockArg) => unreachable!("unsupported &block should have been filtered out"),
-                                    Some(BlockHandler::BlockArgProc(_)) => unreachable!("BlockArgProc is only built for ISEQ callees"),
+                                    Some(BlockHandler::BlockArgProc(_) | BlockHandler::BlockParamProxy(_)) => unreachable!("BlockArgProc and BlockParamProxy are only built for ISEQ callees"),
                                     Some(BlockHandler::BlockIseq(blockiseq)) => Some(blockiseq),
                                     None => None,
                                 };
@@ -6046,6 +6070,10 @@ impl Function {
                 // in HIR construction for the defined opcode to check the send flags of the method
                 // being inlined, too.
                 assert!(!matches!(call_block, Some(BlockHandler::BlockArg)), "BlockArg in SendDirect");
+                if matches!(call_block, Some(BlockHandler::BlockParamProxy(_))) {
+                    search_start = send_pos + 1;
+                    continue;
+                }
 
                 // Apply the cheap optimization heuristics (size, budget, denylist)
                 // before can_inline's more expensive elibility checks. This allows

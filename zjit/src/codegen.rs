@@ -689,7 +689,7 @@ fn gen_insn(cb: &mut CodeBlock, jit: &mut JITState, asm: &mut Assembler, functio
         &Insn::Send { cd, block: None, state, reason, .. } => gen_send_without_block(jit, asm, function, cd, &function.frame_state(state), reason),
         &Insn::Send { cd, block: Some(BlockHandler::BlockIseq(blockiseq)), state, reason, .. } => gen_send(jit, asm, function, cd, blockiseq, &function.frame_state(state), reason),
         &Insn::Send { cd, block: Some(BlockHandler::BlockArg), state, reason, .. } => gen_send(jit, asm, function, cd, std::ptr::null(), &function.frame_state(state), reason),
-        &Insn::Send { block: Some(BlockHandler::BlockArgProc(_)), .. } => unreachable!("BlockArgProc only appears in SendDirect"),
+        &Insn::Send { block: Some(BlockHandler::BlockArgProc(_) | BlockHandler::BlockParamProxy(_)), .. } => unreachable!("BlockArgProc and BlockParamProxy only appear in SendDirect"),
         &Insn::SendForward { cd, blockiseq, state, reason, .. } => gen_send_forward(jit, asm, function, cd, blockiseq, &function.frame_state(state), reason),
         Insn::SendDirect(insn) => {
             let SendDirectData { cd, cme, iseq, recv, args, kw_bits, jit_entry_idx, block, state, exit_state, .. } = &**insn;
@@ -1167,6 +1167,7 @@ fn lower_block_handler(jit: &JITState, bh: BlockHandler) -> lir::BlockHandler {
     match bh {
         BlockHandler::BlockIseq(blockiseq) => lir::BlockHandler::Iseq(blockiseq),
         BlockHandler::BlockArgProc(proc_id) => lir::BlockHandler::Proc(jit.get_opnd(proc_id)),
+        BlockHandler::BlockParamProxy(handler) => lir::BlockHandler::Handler(jit.get_opnd(handler)),
         BlockHandler::BlockArg => unreachable!("BlockArg in a direct iseq call"),
     }
 }
@@ -1175,6 +1176,7 @@ fn gen_block_handler_opnd(asm: &mut Assembler, bh: lir::BlockHandler) -> Opnd {
     match bh {
         lir::BlockHandler::Iseq(blockiseq) => gen_block_handler_specval(asm, blockiseq),
         lir::BlockHandler::Proc(proc) => proc,
+        lir::BlockHandler::Handler(handler) => handler,
     }
 }
 
