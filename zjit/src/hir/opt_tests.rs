@@ -23296,6 +23296,120 @@ mod hir_opt_tests {
     }
 
     #[test]
+    fn specialize_polymorphic_send_shared_method_entry() {
+        set_call_threshold(4);
+        eval("
+        class Base
+          def self.lookup = 3
+        end
+        class C < Base; end
+        class D < Base; end
+
+        def test(klass) = klass.lookup
+
+        test C; test D; test C; test D
+        ");
+        assert_snapshot!(hir_string("test"), @"
+        fn test@<compiled>:8:
+        bb1():
+          EntryPoint interpreter
+          v1:BasicObject = LoadSelf
+          v2:CPtr = LoadSP
+          v3:BasicObject = LoadField v2, :klass@0x1000
+          Jump bb3(v1, v3)
+        bb2():
+          EntryPoint JIT(0)
+          v6:BasicObject = LoadArg :self@0
+          v7:BasicObject = LoadArg :klass@1
+          Jump bb3(v6, v7)
+        bb3(v9:BasicObject, v10:BasicObject):
+          CondBranchHasType v10, ClassSubclass[class_exact*:Class@VALUE(0x1008)], bb6(), bb7()
+        bb6():
+          PatchPoint MethodRedefined(Class@0x1008, lookup@0x1010, cme:0x1018)
+          v40:Fixnum[3] = Const Value(3)
+          Jump bb4(v40)
+        bb7():
+          CondBranchHasType v10, ClassSubclass[class_exact*:Class@VALUE(0x1040)], bb8(), bb5()
+        bb8():
+          PatchPoint MethodRedefined(Class@0x1040, lookup@0x1010, cme:0x1018)
+          v42:Fixnum[3] = Const Value(3)
+          Jump bb4(v42)
+        bb5():
+          v26:CBool = IsMethodCme v10, :lookup
+          CondBranch v26, bb9(), bb10()
+        bb9():
+          PatchPoint MethodRedefined(Class@0x1008, lookup@0x1010, cme:0x1018)
+          v44:Fixnum[3] = Const Value(3)
+          Jump bb4(v44)
+        bb10():
+          v30:BasicObject = Send v10, :lookup # SendFallbackReason: Send: polymorphic fallback
+          Jump bb4(v30)
+        bb4(v15:BasicObject):
+          PatchPoint NoEPEscape(test)
+          CheckInterrupts
+          Return v15
+        ");
+    }
+
+    #[test]
+    fn specialize_polymorphic_send_shared_method_entry_stays_dynamic() {
+        set_call_threshold(4);
+        eval("
+        class Base
+          def self.lookup(**kw) = kw
+        end
+        class C < Base; end
+        class D < Base; end
+        class E < Base; end
+
+        def test(klass, kw) = klass.lookup(**kw)
+
+        test C, {}; test D, {}; test E, {}; test C, {}
+        ");
+        assert_snapshot!(hir_string("test"), @"
+        fn test@<compiled>:9:
+        bb1():
+          EntryPoint interpreter
+          v1:BasicObject = LoadSelf
+          v2:CPtr = LoadSP
+          v3:BasicObject = LoadField v2, :klass@0x1000
+          v4:BasicObject = LoadField v2, :kw@0x1001
+          Jump bb3(v1, v3, v4)
+        bb2():
+          EntryPoint JIT(0)
+          v7:BasicObject = LoadArg :self@0
+          v8:BasicObject = LoadArg :klass@1
+          v9:BasicObject = LoadArg :kw@2
+          Jump bb3(v7, v8, v9)
+        bb3(v11:BasicObject, v12:BasicObject, v13:BasicObject):
+          CondBranchHasType v12, ClassSubclass[class_exact*:Class@VALUE(0x1008)], bb6(), bb7()
+        bb6():
+          v22:ClassSubclass[class_exact*:Class@VALUE(0x1008)] = RefineType v12, ClassSubclass[class_exact*:Class@VALUE(0x1008)]
+          v23:BasicObject = Send v22, :lookup, v13 # SendFallbackReason: Complex argument passing
+          Jump bb4(v23)
+        bb7():
+          CondBranchHasType v12, ClassSubclass[class_exact*:Class@VALUE(0x1010)], bb8(), bb9()
+        bb8():
+          v27:ClassSubclass[class_exact*:Class@VALUE(0x1010)] = RefineType v12, ClassSubclass[class_exact*:Class@VALUE(0x1010)]
+          v28:BasicObject = Send v27, :lookup, v13 # SendFallbackReason: Complex argument passing
+          Jump bb4(v28)
+        bb9():
+          CondBranchHasType v12, ClassSubclass[class_exact*:Class@VALUE(0x1018)], bb10(), bb5()
+        bb10():
+          v32:ClassSubclass[class_exact*:Class@VALUE(0x1018)] = RefineType v12, ClassSubclass[class_exact*:Class@VALUE(0x1018)]
+          v33:BasicObject = Send v32, :lookup, v13 # SendFallbackReason: Complex argument passing
+          Jump bb4(v33)
+        bb5():
+          v39:BasicObject = Send v12, :lookup, v13 # SendFallbackReason: Send: polymorphic fallback
+          Jump bb4(v39)
+        bb4(v19:BasicObject):
+          PatchPoint NoEPEscape(test)
+          CheckInterrupts
+          Return v19
+        ");
+    }
+
+    #[test]
     fn specialize_polymorphic_send_with_immediate() {
         set_call_threshold(4);
         eval("
@@ -23586,18 +23700,25 @@ mod hir_opt_tests {
         bb6():
           v18:StaticSymbol = RefineType v10, StaticSymbol
           PatchPoint MethodRedefined(Symbol@0x1008, to_s@0x1010, cme:0x1018)
-          v36:StringExact = InvokeBuiltin leaf <inline_expr>, v18
-          Jump bb4(v36)
+          v40:StringExact = InvokeBuiltin leaf <inline_expr>, v18
+          Jump bb4(v40)
         bb7():
           CondBranchHasType v10, DynamicSymbol, bb8(), bb5()
         bb8():
           v23:DynamicSymbol = RefineType v10, DynamicSymbol
           PatchPoint MethodRedefined(Symbol@0x1008, to_s@0x1010, cme:0x1018)
-          v38:StringExact = InvokeBuiltin leaf <inline_expr>, v23
-          Jump bb4(v38)
+          v42:StringExact = InvokeBuiltin leaf <inline_expr>, v23
+          Jump bb4(v42)
         bb5():
-          v26:BasicObject = Send v10, :to_s # SendFallbackReason: Send: polymorphic fallback
-          Jump bb4(v26)
+          v26:CBool = IsMethodCme v10, :to_s
+          CondBranch v26, bb9(), bb10()
+        bb9():
+          PatchPoint MethodRedefined(Symbol@0x1008, to_s@0x1010, cme:0x1018)
+          v44:StringExact = InvokeBuiltin leaf <inline_expr>, v10
+          Jump bb4(v44)
+        bb10():
+          v30:BasicObject = Send v10, :to_s # SendFallbackReason: Send: polymorphic fallback
+          Jump bb4(v30)
         bb4(v15:BasicObject):
           PatchPoint NoEPEscape(test)
           CheckInterrupts
@@ -23642,11 +23763,18 @@ mod hir_opt_tests {
         bb6():
           PatchPoint NoSingletonClass(C@0x1008)
           PatchPoint MethodRedefined(C@0x1008, foo@0x1010, cme:0x1018)
-          v32:Fixnum[3] = Const Value(3)
-          Jump bb4(v32)
+          v36:Fixnum[3] = Const Value(3)
+          Jump bb4(v36)
         bb5():
-          v21:BasicObject = Send v10, :foo # SendFallbackReason: Send: polymorphic fallback
-          Jump bb4(v21)
+          v21:CBool = IsMethodCme v10, :foo
+          CondBranch v21, bb7(), bb8()
+        bb7():
+          PatchPoint MethodRedefined(C@0x1008, foo@0x1010, cme:0x1018)
+          v38:Fixnum[3] = Const Value(3)
+          Jump bb4(v38)
+        bb8():
+          v25:BasicObject = Send v10, :foo # SendFallbackReason: Send: polymorphic fallback
+          Jump bb4(v25)
         bb4(v15:BasicObject):
           PatchPoint NoEPEscape(test)
           CheckInterrupts
@@ -27800,13 +27928,13 @@ mod hir_opt_tests {
           PatchPoint NoSingletonClass(C@0x1008)
           PatchPoint MethodRedefined(C@0x1008, foo@0x1010, cme:0x1018)
           PushInlineFrame :foo, v18 (0x1040), num_args=0, block=0x1060
-          v54:CPtr = GetEP 0
-          v55:CInt64 = LoadField v54, :VM_ENV_DATA_INDEX_SPECVAL@0x1080
-          v56:CInt64[-4] = Const CInt64(-4)
-          v57:CInt64 = IntAnd v55, v56
-          v58:BasicObject = InvokeBlockIseqDirect (0x1060), v57
+          v60:CPtr = GetEP 0
+          v61:CInt64 = LoadField v60, :VM_ENV_DATA_INDEX_SPECVAL@0x1080
+          v62:CInt64[-4] = Const CInt64(-4)
+          v63:CInt64 = IntAnd v61, v62
+          v64:BasicObject = InvokeBlockIseqDirect (0x1060), v63
           PopInlineFrame
-          Jump bb4(v58)
+          Jump bb4(v64)
         bb6():
           CondBranchHasType v10, ObjectSubclass[class_exact:A], bb7(), bb8()
         bb7():
@@ -27814,13 +27942,13 @@ mod hir_opt_tests {
           PatchPoint NoSingletonClass(A@0x1088)
           PatchPoint MethodRedefined(A@0x1088, foo@0x1010, cme:0x1018)
           PushInlineFrame :foo, v23 (0x1040), num_args=0, block=0x1060
-          v71:CPtr = GetEP 0
-          v72:CInt64 = LoadField v71, :VM_ENV_DATA_INDEX_SPECVAL@0x1080
-          v73:CInt64[-4] = Const CInt64(-4)
-          v74:CInt64 = IntAnd v72, v73
-          v75:BasicObject = InvokeBlockIseqDirect (0x1060), v74
+          v77:CPtr = GetEP 0
+          v78:CInt64 = LoadField v77, :VM_ENV_DATA_INDEX_SPECVAL@0x1080
+          v79:CInt64[-4] = Const CInt64(-4)
+          v80:CInt64 = IntAnd v78, v79
+          v81:BasicObject = InvokeBlockIseqDirect (0x1060), v80
           PopInlineFrame
-          Jump bb4(v75)
+          Jump bb4(v81)
         bb8():
           CondBranchHasType v10, ObjectSubclass[class_exact:B], bb9(), bb10()
         bb9():
@@ -27828,16 +27956,29 @@ mod hir_opt_tests {
           PatchPoint NoSingletonClass(B@0x1090)
           PatchPoint MethodRedefined(B@0x1090, foo@0x1010, cme:0x1018)
           PushInlineFrame :foo, v28 (0x1040), num_args=0, block=0x1060
-          v88:CPtr = GetEP 0
-          v89:CInt64 = LoadField v88, :VM_ENV_DATA_INDEX_SPECVAL@0x1080
-          v90:CInt64[-4] = Const CInt64(-4)
-          v91:CInt64 = IntAnd v89, v90
-          v92:BasicObject = InvokeBlockIseqDirect (0x1060), v91
+          v94:CPtr = GetEP 0
+          v95:CInt64 = LoadField v94, :VM_ENV_DATA_INDEX_SPECVAL@0x1080
+          v96:CInt64[-4] = Const CInt64(-4)
+          v97:CInt64 = IntAnd v95, v96
+          v98:BasicObject = InvokeBlockIseqDirect (0x1060), v97
           PopInlineFrame
-          Jump bb4(v92)
+          Jump bb4(v98)
         bb10():
-          v31:BasicObject = Send v10, 0x1060, :foo # SendFallbackReason: Send: polymorphic fallback
-          Jump bb4(v31)
+          v31:CBool = IsMethodCme v10, :foo
+          CondBranch v31, bb11(), bb12()
+        bb11():
+          PatchPoint MethodRedefined(C@0x1008, foo@0x1010, cme:0x1018)
+          PushInlineFrame :foo, v10 (0x1040), num_args=0, block=0x1060
+          v111:CPtr = GetEP 0
+          v112:CInt64 = LoadField v111, :VM_ENV_DATA_INDEX_SPECVAL@0x1080
+          v113:CInt64[-4] = Const CInt64(-4)
+          v114:CInt64 = IntAnd v112, v113
+          v115:BasicObject = InvokeBlockIseqDirect (0x1060), v114
+          PopInlineFrame
+          Jump bb4(v115)
+        bb12():
+          v35:BasicObject = Send v10, 0x1060, :foo # SendFallbackReason: Send: polymorphic fallback
+          Jump bb4(v35)
         bb4(v15:BasicObject):
           PatchPoint NoEPEscape(test)
           CheckInterrupts

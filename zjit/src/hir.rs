@@ -1089,6 +1089,8 @@ pub enum Insn {
     Test { val: InsnId },
     /// Return C `true` if `val`'s method on cd resolves to the cfunc.
     IsMethodCfunc { val: InsnId, cd: *const rb_call_data, cfunc: *const u8, state: InsnId },
+    /// Return C `true` if `val`'s method `mid` resolves to `cme`.
+    IsMethodCme { val: InsnId, mid: ID, cme: *const rb_callable_method_entry_t, state: InsnId },
     /// Return C `true` if left == right
     IsBitEqual { left: InsnId, right: InsnId },
     /// Return C `true` if left != right
@@ -1515,6 +1517,7 @@ macro_rules! for_each_operand_impl {
             | Insn::GuardNoBitsSet { val, state, .. }
             | Insn::ToArray { val, state }
             | Insn::IsMethodCfunc { val, state, .. }
+            | Insn::IsMethodCme { val, state, .. }
             | Insn::ToNewArray { val, state }
             | Insn::SetLocal { val, state, .. }
             | Insn::BoxFixnum { val, state } => {
@@ -1873,6 +1876,7 @@ impl Insn {
             Insn::ObjectAllocClass { .. } => allocates,
             Insn::Test { .. } => effects::Empty,
             Insn::IsMethodCfunc { .. } => effects::Any,
+            Insn::IsMethodCme { .. } => effects::Any,
             Insn::IsBitEqual { .. } => effects::Empty,
             Insn::IsBitNotEqual { .. } => effects::Empty,
             Insn::BoxBool { .. } => effects::Empty,
@@ -2285,6 +2289,7 @@ impl<'a> std::fmt::Display for InsnPrinter<'a> {
             }
             Insn::Test { val } => { write!(f, "Test {val}") }
             Insn::IsMethodCfunc { val, cd, .. } => { write!(f, "IsMethodCFunc {val}, :{}", ruby_call_method_name(*cd)) }
+            Insn::IsMethodCme { val, mid, .. } => { write!(f, "IsMethodCme {val}, :{}", mid.contents_lossy()) }
             Insn::IsBitEqual { left, right } => write!(f, "IsBitEqual {left}, {right}"),
             Insn::IsBitNotEqual { left, right } => write!(f, "IsBitNotEqual {left}, {right}"),
             Insn::BoxBool { val } => write!(f, "BoxBool {val}"),
@@ -2990,6 +2995,8 @@ pub struct Function {
     /// Maps each runtime counter instruction to the send that emitted it.
     /// Remove them before retrying a send that stayed dynamic.
     send_counters: HashMap<InsnId, InsnId>,
+    /// Sends behind an `IsMethodCme` check. See [`Function::dispatch_method_entry`].
+    method_entry_arms: Vec<MethodEntryArm>,
     /// Superblock that targets all entry blocks. The sole root for RPO/dominator computation.
     pub entries_block: BlockId,
     /// Entry block for the interpreter
@@ -3002,6 +3009,16 @@ pub struct Function {
     /// not count Snapshot, PatchPoint, etc.
     /// Currently updated by `infer_types` as a heuristic but that is not a guarantee.
     num_instructions: usize,
+}
+
+/// A send that runs only when its receiver's class resolves `cme`.
+#[derive(Debug)]
+struct MethodEntryArm {
+    check: InsnId,
+    send: InsnId,
+    class: VALUE,
+    cme: *const rb_callable_method_entry_t,
+    visited: bool,
 }
 
 /// The kind of a value an ISEQ returns
@@ -3259,6 +3276,7 @@ impl Function {
             union_find: UnionFind::new().into(),
             blocks: vec![Block::default(), Block::default()],
             send_counters: HashMap::new(),
+            method_entry_arms: vec![],
             entries_block: BlockId(0),
             entry_block: BlockId(1),
             jit_entry_blocks: vec![],
@@ -3842,6 +3860,7 @@ impl Function {
             Insn::Test { val } if self.type_of(*val).is_known_truthy() => Type::from_cbool(true),
             Insn::Test { .. } => types::CBool,
             Insn::IsMethodCfunc { .. } => types::CBool,
+            Insn::IsMethodCme { .. } => types::CBool,
             Insn::IsBitEqual { .. } => types::CBool,
             Insn::IsBitNotEqual { .. } => types::CBool,
             Insn::BoxBool { .. } => types::BoolExact,
@@ -4357,6 +4376,35 @@ impl Function {
             self.push_insn(matched_block, Insn::Jump(BranchEdge { target: join_block, args: vec![result] }));
             block = next_block;
         }
+    }
+
+    /// When every profiled receiver class resolves the same ISEQ method, call it directly for the
+    /// other receivers that resolve it too. Returns the block for the rest. `fold_constants`
+    /// removes the arm again once `type_specialize` has left its send dynamic.
+    fn dispatch_method_entry(&mut self, block: BlockId, summary: &TypeDistributionSummary, send: Insn, join_block: BlockId) -> BlockId {
+        let Insn::Send { recv, cd, state, .. } = send else { unreachable!() };
+        let mid = unsafe { vm_ci_mid((*cd).ci) };
+        let mut classes = summary.buckets().iter().take_while(|ty| !ty.is_empty()).map(|ty| ty.class());
+        let Some(first_class) = classes.next() else { return block };
+        let cme = unsafe { rb_callable_method_entry(first_class, mid) };
+        if cme.is_null()
+            || unsafe { get_cme_def_type(cme) } != VM_METHOD_TYPE_ISEQ
+            || classes.any(|class| unsafe { rb_callable_method_entry(class, mid) } != cme) {
+            return block;
+        }
+        let insn_idx = self.frame_state_ref(state).insn_idx() as u32;
+        let matches = self.push_insn(block, Insn::IsMethodCme { val: recv, mid, cme, state });
+        let matched_block = self.new_block(insn_idx);
+        let fallback_block = self.new_block(insn_idx);
+        self.push_insn(block, Insn::CondBranch {
+            val: matches,
+            if_true: BranchEdge { target: matched_block, args: vec![] },
+            if_false: BranchEdge { target: fallback_block, args: vec![] },
+        });
+        let result = self.push_insn(matched_block, send);
+        self.method_entry_arms.push(MethodEntryArm { check: matches, send: result, class: first_class, cme, visited: false });
+        self.push_insn(matched_block, Insn::Jump(BranchEdge { target: join_block, args: vec![result] }));
+        fallback_block
     }
 
     /// Guard the caller-splat length selected for this runtime path.
@@ -4983,7 +5031,12 @@ impl Function {
                 match resolved.insn(self) {
                     &Insn::Send { mut recv, cd, state, block: send_block, caller_splat_length, .. } => {
                         let mut has_block = send_block.is_some();
-                        let (klass, profiled_type) = match self.resolve_receiver_type(recv, self.type_of(recv), state) {
+                        let method_entry_arm = self.method_entry_arms.iter_mut().find(|arm| arm.send == insn_id).map(|arm| {
+                            arm.visited = true;
+                            (arm.class, arm.cme)
+                        });
+                        let method_entry_cme = method_entry_arm.map(|(_, cme)| cme);
+                        let (klass, profiled_type) = if let Some((class, _)) = method_entry_arm { (class, None) } else { match self.resolve_receiver_type(recv, self.type_of(recv), state) {
                             ReceiverTypeResolution::StaticallyKnown { class } => (class, None),
                             ReceiverTypeResolution::Monomorphic { profiled_type }
                             | ReceiverTypeResolution::SkewedPolymorphic { profiled_type } => (profiled_type.class(), Some(profiled_type)),
@@ -5003,14 +5056,14 @@ impl Function {
                                 self.push_insn_id(block, insn_id);
                                 continue;
                             }
-                        };
+                        }};
                         let ci = unsafe { (*cd).ci }; // info about the call site
 
                         let flags = unsafe { rb_vm_ci_flag(ci) };
 
                         let mid = unsafe { vm_ci_mid(ci) };
                         // Do method lookup
-                        let mut cme = unsafe { rb_callable_method_entry(klass, mid) };
+                        let mut cme = method_entry_cme.unwrap_or_else(|| unsafe { rb_callable_method_entry(klass, mid) });
                         if cme.is_null() {
                             self.set_dynamic_send_reason(insn_id, SendNotOptimizedMethodType(MethodType::Null));
                             self.push_insn_id(block, insn_id); continue;
@@ -5160,7 +5213,7 @@ impl Function {
                             };
 
                             // Check singleton class assumption first, before emitting other patchpoints
-                            if !self.assume_no_singleton_classes(block, klass, state) {
+                            if method_entry_cme.is_none() && !self.assume_no_singleton_classes(block, klass, state) {
                                 self.set_dynamic_send_reason(insn_id, SingletonClassSeen);
                                 self.push_insn_id(block, insn_id); continue;
                             }
@@ -7144,6 +7197,11 @@ impl Function {
                             }
                         }
                     }
+                    Insn::IsMethodCme { .. } if self.method_entry_arms.iter().any(|arm|
+                        arm.check == insn_id && arm.visited && matches!(self.find(arm.send), Insn::Send { .. })
+                    ) => {
+                        self.new_insn(Insn::Const { val: Const::CBool(false) })
+                    }
                     &Insn::IsBitEqual { left, right } if self.is_bit_equal(left, right) => {
                         self.new_insn(Insn::Const { val: Const::CBool(true) })
                     }
@@ -8223,6 +8281,7 @@ impl Function {
             Insn::Test { val }
             | Insn::BoolNegate { val }
             | Insn::IsMethodCfunc { val, .. }
+            | Insn::IsMethodCme { val, .. }
             | Insn::SetGlobal { val, .. }
             | Insn::SetLocal { val, .. }
             | Insn::SetClassVar { val, .. }
@@ -10529,6 +10588,7 @@ fn add_iseq_to_hir(
                                 fun.push_insn(iftrue_block, Insn::Jump(BranchEdge { target: join_block, args: vec![send] }));
                             }
                         }
+                        block = fun.dispatch_method_entry(block, &summary, Insn::Send { recv, cd, block: None, args: args.clone(), caller_splat_length, state: exit_id, reason: Uncategorized(opcode.into()) }, join_block);
                         // In the fallthrough case, do a generic interpreter send and then join.
                         let reason = SendPolymorphicFallback;
                         let send = fun.push_insn(block, Insn::Send { recv, cd, block: None, args, caller_splat_length, state: exit_id, reason });
@@ -10618,6 +10678,7 @@ fn add_iseq_to_hir(
                             let send = fun.push_insn(iftrue_block, Insn::Send { recv: refined_recv, cd, block: block_handler, args: args.clone(), caller_splat_length, state: snapshot, reason: Uncategorized(opcode.into()) });
                             fun.push_insn(iftrue_block, Insn::Jump(BranchEdge { target: join_block, args: vec![send] }));
                         }
+                        block = fun.dispatch_method_entry(block, &summary, Insn::Send { recv, cd, block: block_handler, args: args.clone(), caller_splat_length, state: exit_id, reason: Uncategorized(opcode.into()) }, join_block);
                         // In the fallthrough case, do a generic interpreter send and then join.
                         let reason = SendPolymorphicFallback;
                         let send = fun.push_insn(block, Insn::Send { recv, cd, block: block_handler, args, caller_splat_length, state: exit_id, reason });
