@@ -33,6 +33,7 @@ mod disasm;
 mod options;
 mod perf;
 mod profile;
+mod polyprobe;
 mod invariants;
 mod bitset;
 mod gc;

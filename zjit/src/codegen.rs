@@ -800,7 +800,15 @@ fn gen_insn(cb: &mut CodeBlock, jit: &mut JITState, asm: &mut Assembler, functio
         Insn::CheckMatch { target, pattern, flag, state } => gen_checkmatch(jit, asm, function, opnd!(target), opnd!(pattern), *flag, &function.frame_state(*state)),
         Insn::GetSpecialSymbol { symbol_type, state } => gen_getspecial_symbol(asm, *symbol_type, &function.frame_state(*state)),
         Insn::GetSpecialNumber { nth, state } => gen_getspecial_number(asm, *nth, &function.frame_state(*state)),
-        &Insn::IncrCounter(counter) => no_output!(gen_incr_counter(asm, counter)),
+        &Insn::IncrCounter(counter) => {
+            if crate::polyprobe::jit_enabled() {
+                let name = counter.name();
+                if name.starts_with("getivar_fallback") {
+                    unsafe { crate::polyprobe::LAST_GETIVAR_REASON = Some(Box::leak(name.to_string().into_boxed_str())); }
+                }
+            }
+            no_output!(gen_incr_counter(asm, counter))
+        }
         Insn::IncrCounterPtr { counter_ptr } => no_output!(gen_incr_counter_ptr(asm, *counter_ptr)),
         &Insn::CheckInterrupts { state } => no_output!(gen_check_interrupts(jit, asm, function, &function.frame_state(state))),
         Insn::BreakPoint => no_output!(asm.breakpoint()),
@@ -1253,6 +1261,11 @@ fn gen_ccall_variadic(
 /// Emit an uncached instance variable lookup
 fn gen_getivar(jit: &mut JITState, asm: &mut Assembler, function: &Function, recv_id: InsnId, recv: Opnd, id: ID, ic: *const iseq_inline_iv_cache_entry, state: &FrameState) -> Opnd {
     gen_trace_fallback(asm, "getivar");
+    if crate::polyprobe::jit_enabled() {
+        gen_prepare_non_leaf_call(jit, asm, function, state);
+        let reason = unsafe { crate::polyprobe::LAST_GETIVAR_REASON.take() }.unwrap_or("getivar_fallback_unknown");
+        gen_polyprobe(asm, state, reason, std::ptr::null(), recv);
+    }
     if function.type_of(recv_id).could_be(types::Module) {
         // Reading a class or module ivar from a non-owner Ractor raises Ractor::IsolationError.
         gen_prepare_non_leaf_call(jit, asm, function, state);
@@ -1613,6 +1626,15 @@ fn gen_trace_fallback(asm: &mut Assembler, reason: &str) {
     asm_ccall!(asm, rb_zjit_record_fallback_stack, Opnd::const_ptr(reason_ptr));
 }
 
+fn gen_polyprobe(asm: &mut Assembler, state: &FrameState, reason: &str, cd: *const rb_call_data, recv: Opnd) {
+    if !crate::polyprobe::jit_enabled() {
+        return;
+    }
+    let reason_ptr = std::ffi::CString::new(reason.to_string()).unwrap().into_raw() as *const u8;
+    use crate::polyprobe::rb_zjit_polyprobe_fallback;
+    asm_ccall!(asm, rb_zjit_polyprobe_fallback, CFP, Opnd::const_ptr(state.iseq as *const u8), Opnd::UImm(state.insn_idx() as u64), Opnd::const_ptr(reason_ptr), Opnd::const_ptr(cd as *const u8), recv);
+}
+
 fn gen_trace_send_fallback(asm: &mut Assembler, reason: &SendFallbackReason) {
     if !get_option!(trace_fallbacks) {
         return;
@@ -1634,6 +1656,7 @@ fn gen_send(
     gen_trace_send_fallback(asm, &reason);
 
     gen_prepare_fallback_call(jit, asm, function, state);
+    gen_polyprobe(asm, state, &format!("{reason}"), cd, Opnd::UImm(0));
     asm_comment!(asm, "call #{} with dynamic dispatch", ruby_call_method_name(cd));
     unsafe extern "C" {
         fn rb_vm_send(ec: EcPtr, cfp: CfpPtr, cd: VALUE, blockiseq: IseqPtr) -> VALUE;
@@ -1659,6 +1682,7 @@ fn gen_send_forward(
     gen_trace_send_fallback(asm, &reason);
 
     gen_prepare_fallback_call(jit, asm, function, state);
+    gen_polyprobe(asm, state, &format!("{reason}"), cd, Opnd::UImm(0));
 
     asm_comment!(asm, "call #{} with dynamic dispatch", ruby_call_method_name(cd));
     unsafe extern "C" {
@@ -1684,6 +1708,7 @@ fn gen_send_without_block(
     gen_trace_send_fallback(asm, &reason);
 
     gen_prepare_fallback_call(jit, asm, function, state);
+    gen_polyprobe(asm, state, &format!("{reason}"), cd, Opnd::UImm(0));
     asm_comment!(asm, "call #{} with dynamic dispatch", ruby_call_method_name(cd));
     unsafe extern "C" {
         fn rb_vm_opt_send_without_block(ec: EcPtr, cfp: CfpPtr, cd: VALUE) -> VALUE;
@@ -2003,6 +2028,7 @@ fn gen_invokeblock(
     gen_trace_send_fallback(asm, &reason);
 
     gen_prepare_fallback_call(jit, asm, function, state);
+    gen_polyprobe(asm, state, &format!("{reason}"), cd, Opnd::UImm(0));
 
     asm_comment!(asm, "call invokeblock");
     unsafe extern "C" {
@@ -2171,6 +2197,7 @@ fn gen_invokesuper(
     gen_trace_send_fallback(asm, &reason);
 
     gen_prepare_fallback_call(jit, asm, function, state);
+    gen_polyprobe(asm, state, &format!("{reason}"), cd, Opnd::UImm(0));
     asm_comment!(asm, "call super with dynamic dispatch");
     unsafe extern "C" {
         fn rb_vm_invokesuper(ec: EcPtr, cfp: CfpPtr, cd: VALUE, blockiseq: IseqPtr) -> VALUE;
@@ -2196,6 +2223,7 @@ fn gen_invokesuperforward(
     gen_trace_send_fallback(asm, &reason);
 
     gen_prepare_fallback_call(jit, asm, function, state);
+    gen_polyprobe(asm, state, &format!("{reason}"), cd, Opnd::UImm(0));
     asm_comment!(asm, "call super with dynamic dispatch (forwarding)");
     unsafe extern "C" {
         fn rb_vm_invokesuperforward(ec: EcPtr, cfp: CfpPtr, cd: VALUE, blockiseq: IseqPtr) -> VALUE;

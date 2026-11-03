@@ -678,6 +678,10 @@ fn parse_option(str_ptr: *const std::os::raw::c_char) -> Option<()> {
 
 /// Update rb_zjit_profile_threshold based on rb_zjit_call_threshold and options.num_profiles
 fn update_profile_threshold() {
+    if crate::polyprobe::interp_enabled() {
+        unsafe { rb_zjit_profile_threshold = 1; }
+        return;
+    }
     if unsafe { rb_zjit_call_threshold == 1 } {
         // If --zjit-call-threshold=1, never rewrite ISEQs to profile instructions.
         unsafe { rb_zjit_profile_threshold = 0; }

@@ -113,6 +113,10 @@ fn profile_insn(bare_opcode: ruby_vminsn_type, ec: EcPtr) {
     let profiler = &mut Profiler::new(ec);
     let profile = &mut get_or_create_iseq_payload(profiler.iseq).profile;
     let _ = profile_insn_sample(bare_opcode, profiler, profile);
+    if crate::polyprobe::interp_enabled() {
+        crate::polyprobe::record_interp(bare_opcode, profiler.iseq, profiler.insn_idx as u32, profiler.cfp, unsafe { get_cfp_pc(profiler.cfp) });
+        return;
+    }
 
     // Once we profile the instruction enough times, we stop profiling it.
     let entry = profile.entry_mut(profiler.insn_idx);

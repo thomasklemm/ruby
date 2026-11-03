@@ -767,6 +767,7 @@ pub extern "C" fn rb_zjit_reset_stats_bang(_ec: EcPtr, _self: VALUE) -> VALUE {
         return Qnil;
     }
 
+    if let Some(p) = crate::polyprobe::probe() { p.reset(); }
     with_vm_lock(src_loc!(), || {
         // Reset all counters to zero
         *ZJITState::get_counters() = Counters::default();
@@ -802,6 +803,9 @@ pub extern "C" fn rb_zjit_reset_stats_bang(_ec: EcPtr, _self: VALUE) -> VALUE {
 pub extern "C" fn rb_zjit_stats(_ec: EcPtr, _self: VALUE, target_key: VALUE) -> VALUE {
     if !zjit_enabled_p() {
         return Qnil;
+    }
+    if target_key == Qnil {
+        if let Some(p) = crate::polyprobe::probe() { p.dump(); }
     }
 
     macro_rules! set_stat {
