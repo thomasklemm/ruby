@@ -792,6 +792,10 @@ pub extern "C" fn rb_zjit_reset_stats_bang(_ec: EcPtr, _self: VALUE) -> VALUE {
         // Reset iseq call counters
         ZJITState::get_iseq_calls_count_pointers().iter_mut()
             .for_each(|b| { **(b.1) = 0; });
+
+        // Reset per-ISEQ counters
+        ZJITState::get_iseq_counter_pointers().iter_mut()
+            .for_each(|b| { **(b.1) = 0; });
     });
 
     Qnil
@@ -969,7 +973,22 @@ pub extern "C" fn rb_zjit_stats(_ec: EcPtr, _self: VALUE, target_key: VALUE) -> 
         set_stat_usize!(hash, &key_string, **counter);
     }
 
+    // Set per-ISEQ counters as iseq:<counter>:<location>
+    for (key, counter) in ZJITState::get_iseq_counter_pointers().iter() {
+        set_stat_usize!(hash, &format!("iseq:{key}"), **counter);
+    }
+
     hash
+}
+
+/// With --zjit-stats-iseq, return the cell that counts `counter` for `iseq`.
+pub fn iseq_counter_ptr(counter: Counter, iseq: IseqPtr) -> Option<*mut u64> {
+    if !get_option!(stats_iseq) {
+        return None;
+    }
+    let key = format!("{}:{}", counter.name(), iseq_get_location(iseq, 0));
+    let cell = ZJITState::get_iseq_counter_pointers().entry(key).or_insert_with(|| Box::new(0));
+    Some(&mut **cell as *mut u64)
 }
 
 pub fn total_exit_count() -> u64 {

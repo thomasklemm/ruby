@@ -3171,6 +3171,9 @@ impl Assembler
                     if get_option!(stats) || cfg!(test) {
                         asm_comment!(self, "increment a side exit counter");
                         self.incr_counter(Opnd::const_ptr(exit_counter_ptr(reason)), 1.into());
+                        if let Some(counter_ptr) = crate::stats::iseq_counter_ptr(side_exit_counter(reason), exit.iseq) {
+                            self.incr_counter(Opnd::const_ptr(counter_ptr as *const u8), 1.into());
+                        }
 
                         if let SideExitReason::UnhandledYARVInsn(opcode) = reason {
                             asm_comment!(self, "increment an unhandled YARV insn counter");

@@ -1630,7 +1630,7 @@ fn gen_send(
     state: &FrameState,
     reason: SendFallbackReason,
 ) -> lir::Opnd {
-    gen_incr_send_fallback_counter(asm, reason);
+    gen_incr_send_fallback_counter(asm, reason, state.iseq);
     gen_trace_send_fallback(asm, &reason);
 
     gen_prepare_fallback_call(jit, asm, function, state);
@@ -1655,7 +1655,7 @@ fn gen_send_forward(
     state: &FrameState,
     reason: SendFallbackReason,
 ) -> lir::Opnd {
-    gen_incr_send_fallback_counter(asm, reason);
+    gen_incr_send_fallback_counter(asm, reason, state.iseq);
     gen_trace_send_fallback(asm, &reason);
 
     gen_prepare_fallback_call(jit, asm, function, state);
@@ -1680,7 +1680,7 @@ fn gen_send_without_block(
     state: &FrameState,
     reason: SendFallbackReason,
 ) -> lir::Opnd {
-    gen_incr_send_fallback_counter(asm, reason);
+    gen_incr_send_fallback_counter(asm, reason, state.iseq);
     gen_trace_send_fallback(asm, &reason);
 
     gen_prepare_fallback_call(jit, asm, function, state);
@@ -1999,7 +1999,7 @@ fn gen_invokeblock(
     state: &FrameState,
     reason: SendFallbackReason,
 ) -> lir::Opnd {
-    gen_incr_send_fallback_counter(asm, reason);
+    gen_incr_send_fallback_counter(asm, reason, state.iseq);
     gen_trace_send_fallback(asm, &reason);
 
     gen_prepare_fallback_call(jit, asm, function, state);
@@ -2167,7 +2167,7 @@ fn gen_invokesuper(
     state: &FrameState,
     reason: SendFallbackReason,
 ) -> lir::Opnd {
-    gen_incr_send_fallback_counter(asm, reason);
+    gen_incr_send_fallback_counter(asm, reason, state.iseq);
     gen_trace_send_fallback(asm, &reason);
 
     gen_prepare_fallback_call(jit, asm, function, state);
@@ -2192,7 +2192,7 @@ fn gen_invokesuperforward(
     state: &FrameState,
     reason: SendFallbackReason,
 ) -> lir::Opnd {
-    gen_incr_send_fallback_counter(asm, reason);
+    gen_incr_send_fallback_counter(asm, reason, state.iseq);
     gen_trace_send_fallback(asm, &reason);
 
     gen_prepare_fallback_call(jit, asm, function, state);
@@ -3375,8 +3375,11 @@ fn gen_incr_counter(asm: &mut Assembler, counter: Counter) {
 
 /// Increment a counter for each DynamicSendReason. If the variant has
 /// a counter prefix to break down the details, increment that as well.
-fn gen_incr_send_fallback_counter(asm: &mut Assembler, reason: SendFallbackReason) {
+fn gen_incr_send_fallback_counter(asm: &mut Assembler, reason: SendFallbackReason, iseq: IseqPtr) {
     gen_incr_counter(asm, send_fallback_counter(reason));
+    if let Some(counter_ptr) = crate::stats::iseq_counter_ptr(send_fallback_counter(reason), iseq) {
+        gen_incr_counter_ptr(asm, counter_ptr);
+    }
 
     use SendFallbackReason::*;
     match reason {

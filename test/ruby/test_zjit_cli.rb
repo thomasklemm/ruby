@@ -343,6 +343,31 @@ class TestZJITCLI < Test::Unit::TestCase
     }, stats: true
   end
 
+  def test_stats_iseq
+    assert_runs '[[10, 5], [10, 5], 0, {}]', %q{
+      def kw(**k) = k
+      def a = kw
+      def b = kw
+      def c = a # a is inlined into c, and its fallbacks count for a
+      10.times { a; b; c }
+      RubyVM::ZJIT.reset_stats!
+      3.times { a }
+      5.times { b }
+      7.times { c }
+
+      stats = RubyVM::ZJIT.stats
+      per_iseq = ->(counter, name) { stats.find { |k, _| k.start_with?("iseq:#{counter}:#{name}@") }&.last }
+      sums = Hash.new(0)
+      stats.each { |k, v| sums[k.to_s.split(":", 3)[1].to_sym] += v if k.start_with?("iseq:") }
+      [
+        [per_iseq.(:send_fallback_one_or_more_complex_arg_pass, :a), per_iseq.(:send_fallback_one_or_more_complex_arg_pass, :b)],
+        [per_iseq.(:complex_arg_pass_param_kwrest, :a), per_iseq.(:complex_arg_pass_param_kwrest, :b)],
+        per_iseq.(:send_fallback_one_or_more_complex_arg_pass, :c).to_i,
+        sums.reject { |counter, sum| stats[counter] == sum },
+      ]
+    }, call_threshold: 1, extra_args: ['--zjit-stats-iseq']
+  end
+
   def test_reset_stats
     assert_runs 'true', %q{
       def test = 1

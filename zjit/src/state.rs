@@ -117,6 +117,9 @@ pub struct ZJITState {
     /// Counter pointers for access counts of ISEQs accessed by JIT code
     iseq_calls_count_pointers: HashMap<String, Box<u64>>,
 
+    /// Counter pointers for --zjit-stats-iseq, keyed by "counter:ISEQ location"
+    iseq_counter_pointers: HashMap<String, Box<u64>>,
+
     /// Perfetto tracer for --zjit-trace-exits
     perfetto_tracer: Option<PerfettoTracer>,
 
@@ -205,6 +208,7 @@ impl ZJITState {
             not_annotated_frame_cfunc_counter_pointers: HashMap::new(),
             ccall_counter_pointers: HashMap::new(),
             iseq_calls_count_pointers: HashMap::new(),
+            iseq_counter_pointers: HashMap::new(),
             perfetto_tracer,
             jit_frames: vec![],
             jit_frame_allocator: JITFrameAllocator::new(),
@@ -310,6 +314,11 @@ impl ZJITState {
     /// Get a mutable reference to iseq access count pointers
     pub fn get_iseq_calls_count_pointers() -> &'static mut HashMap<String, Box<u64>> {
         &mut ZJITState::get_instance().iseq_calls_count_pointers
+    }
+
+    /// Get a mutable reference to --zjit-stats-iseq counter pointers
+    pub fn get_iseq_counter_pointers() -> &'static mut HashMap<String, Box<u64>> {
+        &mut ZJITState::get_instance().iseq_counter_pointers
     }
 
     /// Was --zjit-save-compiled-iseqs specified?

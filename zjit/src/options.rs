@@ -90,6 +90,9 @@ pub struct Options {
     /// Enable ZJIT statistics
     pub stats: bool,
 
+    /// Also attribute counters to the ISEQ of the instruction that counted them
+    pub stats_iseq: bool,
+
     /// Print stats on exit (when stats is also true)
     pub print_stats: bool,
 
@@ -210,6 +213,7 @@ impl Default for Options {
             num_profiles: DEFAULT_NUM_PROFILES,
             num_exits_until_invalidate: DEFAULT_NUM_EXITS_UNTIL_INVALIDATE,
             stats: false,
+            stats_iseq: false,
             print_stats: false,
             print_stats_file: None,
             debug: false,
@@ -255,6 +259,8 @@ pub const ZJIT_OPTIONS: &[(&str, &str)] = &[
                      "Collect ZJIT stats and suppress output."),
     ("--zjit-stats[=file]",
                      "Collect ZJIT stats (=file to write; .json for JSON)."),
+    ("--zjit-stats-iseq",
+                     "Per-ISEQ fallback/exit counts (implies --zjit-stats-quiet)."),
     ("--zjit-disable",
                      "Disable ZJIT for lazily enabling it with RubyVM::ZJIT.enable."),
     ("--zjit-perf[=iseq|hir]",
@@ -501,6 +507,11 @@ fn parse_option(str_ptr: *const std::os::raw::c_char) -> Option<()> {
         ("stats", "") => {
             options.stats = true;
             options.print_stats = true;
+        }
+
+        ("stats-iseq", "") => {
+            options.stats = true;
+            options.stats_iseq = true;
         }
         ("stats", path) => {
             // Truncate the file if it exists

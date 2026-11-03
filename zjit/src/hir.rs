@@ -3684,16 +3684,28 @@ impl Function {
         false
     }
 
-    pub fn count(&mut self, block: BlockId, counter: Counter) {
-        if get_option!(stats) {
-            self.push_insn(block, Insn::IncrCounter(counter));
+    /// Count `counter` globally and, with --zjit-stats-iseq, for the ISEQ that `state` belongs
+    /// to (the callee's for inlined code).
+    pub fn count(&mut self, block: BlockId, counter: Counter, state: InsnId) {
+        self.push_counters(block, counter, state);
+    }
+
+    fn push_counters(&mut self, block: BlockId, counter: Counter, state: InsnId) -> Vec<InsnId> {
+        if !get_option!(stats) {
+            return vec![];
         }
+        let mut counters = vec![self.push_insn(block, Insn::IncrCounter(counter))];
+        if let Some(counter_ptr) = crate::stats::iseq_counter_ptr(counter, self.frame_state_ref(state).iseq) {
+            counters.push(self.push_insn(block, Insn::IncrCounterPtr { counter_ptr }));
+        }
+        counters
     }
 
     fn count_send(&mut self, block: BlockId, send: InsnId, counter: Counter) {
-        debug_assert!(self.insns[send].is_send());
-        if get_option!(stats) {
-            let counter = self.push_insn(block, Insn::IncrCounter(counter));
+        let (Insn::Send { state, .. } | Insn::InvokeSuper { state, .. }) = self.insns[send] else {
+            panic!("count_send called with non-send instruction");
+        };
+        for counter in self.push_counters(block, counter, state) {
             self.send_counters.insert(counter, send);
         }
     }
@@ -4900,7 +4912,7 @@ impl Function {
             assert_ne!(block, tmp_block);
             let insns = std::mem::take(&mut self.blocks[tmp_block].insns);
             self.blocks[block].insns.extend(insns);
-            self.count(block, Counter::inline_cfunc_optimized_send_count);
+            self.count(block, Counter::inline_cfunc_optimized_send_count, state);
             if self.type_of(replacement).bit_equal(types::Any) {
                 // Not set yet; infer type
                 self.insn_types[replacement] = self.infer_type(replacement);
@@ -4936,19 +4948,19 @@ impl Function {
         };
         match value {
             IseqReturn::LocalVariable(idx) => {
-                self.count(block, Counter::inline_iseq_optimized_send_count);
+                self.count(block, Counter::inline_iseq_optimized_send_count, state);
                 args[idx as usize]
             }
             IseqReturn::Value(value) => {
-                self.count(block, Counter::inline_iseq_optimized_send_count);
+                self.count(block, Counter::inline_iseq_optimized_send_count, state);
                 self.push_insn(block, Insn::Const { val: Const::Value(value) })
             }
             IseqReturn::Receiver => {
-                self.count(block, Counter::inline_iseq_optimized_send_count);
+                self.count(block, Counter::inline_iseq_optimized_send_count, state);
                 recv
             }
             IseqReturn::InvokeLeafBuiltin(bf, return_type) => {
-                self.count(block, Counter::inline_iseq_optimized_send_count);
+                self.count(block, Counter::inline_iseq_optimized_send_count, state);
                 self.try_inline_invoke_builtin(block, Insn::InvokeBuiltin {
                     bf,
                     recv,
@@ -5169,7 +5181,7 @@ impl Function {
                                 self.emit_caller_splat(block, caller_splat, state);
                                 // Count caller-splat executions that take this optimized path.
                                 // This is a feature-specific counter, not part of optimized_send_count.
-                                self.count(block, Counter::caller_splat_optimized);
+                                self.count(block, Counter::caller_splat_optimized, state);
                             }
 
                             // Add PatchPoint for method redefinition
@@ -5240,7 +5252,7 @@ impl Function {
                                 recv = self.guard_type_recompile(block, recv, Type::from_profiled_type(profiled_type), state, Recompile);
 
                                 let replacement = self.try_emit_optimized_getivar(block, recv, id, profiled_type, state).unwrap_or_else(|counter| {
-                                    self.count(block, counter);
+                                    self.count(block, counter, state);
                                     self.push_insn(block, Insn::GetIvar { self_val: recv, id, ic: std::ptr::null(), state })
                                 });
                                 self.make_equal_to(insn_id, replacement);
@@ -5248,7 +5260,7 @@ impl Function {
                                 // No shape information, just static class information
                                 let resolution = self.resolve_receiver_type_from_profile(recv, state);
                                 let counter = Self::getivar_fallback_reason(resolution, std::ptr::null());
-                                self.count(block, counter);
+                                self.count(block, counter, state);
                                 let getivar = self.push_insn(block, Insn::GetIvar { self_val: recv, id, ic: std::ptr::null(), state });
                                 self.make_equal_to(insn_id, getivar);
                             }
@@ -5262,7 +5274,7 @@ impl Function {
                                 recv = self.guard_type_recompile(block, recv, Type::from_profiled_type(profiled_type), state, Recompile);
                                 let recompile = None;
                                 self.try_emit_optimized_setivar(block, recv, id, val, profiled_type, state, recompile).unwrap_or_else(|counter| {
-                                    self.count(block, counter);
+                                    self.count(block, counter, state);
                                     self.push_insn(block, Insn::SetIvar { self_val: recv, id, ic: std::ptr::null(), val, state });
                                 });
                             } else {
@@ -5447,7 +5459,7 @@ impl Function {
                                                 assert_ne!(block, tmp_block);
                                                 let insns = std::mem::take(&mut fun.blocks[tmp_block].insns);
                                                 fun.blocks[block].insns.extend(insns);
-                                                fun.count(block, Counter::inline_cfunc_optimized_send_count);
+                                                fun.count(block, Counter::inline_cfunc_optimized_send_count, state);
                                                 fun.make_equal_to(send_insn_id, replacement);
                                                 if fun.type_of(replacement).bit_equal(types::Any) {
                                                     // Not set yet; infer type
@@ -5459,7 +5471,7 @@ impl Function {
 
                                             // Only allow leaf calls if we don't have a block argument
                                             if props.leaf && props.no_gc {
-                                                fun.count(block, Counter::inline_cfunc_optimized_send_count);
+                                                fun.count(block, Counter::inline_cfunc_optimized_send_count, state);
                                                 let owner = unsafe { (*cme).owner };
                                                 let ccall = fun.push_insn(block, Insn::CCall { cfunc: cfunc_ptr, recv, args, name, owner, return_type, elidable });
                                                 fun.insn_types[ccall] = fun.infer_type(ccall);
@@ -5514,7 +5526,7 @@ impl Function {
                                                 assert_ne!(block, tmp_block);
                                                 let insns = std::mem::take(&mut fun.blocks[tmp_block].insns);
                                                 fun.blocks[block].insns.extend(insns);
-                                                fun.count(block, Counter::inline_cfunc_optimized_send_count);
+                                                fun.count(block, Counter::inline_cfunc_optimized_send_count, state);
                                                 fun.make_equal_to(send_insn_id, replacement);
                                                 if fun.type_of(replacement).bit_equal(types::Any) {
                                                     // Not set yet; infer type
@@ -5526,7 +5538,7 @@ impl Function {
 
                                             // Only allow inline calls if they are leaf, don't allocate, and don't have a block argument
                                             if props.leaf && props.no_gc {
-                                                fun.count(block, Counter::inline_cfunc_optimized_send_count);
+                                                fun.count(block, Counter::inline_cfunc_optimized_send_count, state);
                                                 let owner = unsafe { (*cme).owner };
                                                 let ccall = fun.push_insn(block, Insn::CCall { cfunc: cfunc_ptr, recv, args, name, owner, return_type, elidable });
                                                 fun.insn_types[ccall] = fun.infer_type(ccall);
@@ -5799,7 +5811,7 @@ impl Function {
                                         assert_ne!(block, tmp_block);
                                         let insns = std::mem::take(&mut self.blocks[tmp_block].insns);
                                         self.blocks[block].insns.extend(insns);
-                                        self.count(block, Counter::inline_cfunc_optimized_send_count);
+                                        self.count(block, Counter::inline_cfunc_optimized_send_count, state);
                                         self.make_equal_to(insn_id, replacement);
                                         if self.type_of(replacement).bit_equal(types::Any) {
                                             // Not set yet; infer type
@@ -5816,7 +5828,7 @@ impl Function {
                                     let elidable = props.elidable;
                                     // Filter for a leaf and GC free function
                                     let ccall = if props.leaf && props.no_gc {
-                                        self.count(block, Counter::inline_cfunc_optimized_send_count);
+                                        self.count(block, Counter::inline_cfunc_optimized_send_count, state);
                                         self.push_insn(block, Insn::CCall { cfunc: cfunc_ptr, recv, args, name, owner, return_type, elidable })
                                     } else {
                                         if get_option!(stats) {
@@ -5849,7 +5861,7 @@ impl Function {
                                         assert_ne!(block, tmp_block);
                                         let insns = std::mem::take(&mut self.blocks[tmp_block].insns);
                                         self.blocks[block].insns.extend(insns);
-                                        self.count(block, Counter::inline_cfunc_optimized_send_count);
+                                        self.count(block, Counter::inline_cfunc_optimized_send_count, state);
                                         self.make_equal_to(insn_id, replacement);
                                         if self.type_of(replacement).bit_equal(types::Any) {
                                             // Not set yet; infer type
@@ -5866,7 +5878,7 @@ impl Function {
                                     let elidable = props.elidable;
                                     // Filter for a leaf and GC free function
                                     let ccall = if props.leaf && props.no_gc {
-                                        self.count(block, Counter::inline_cfunc_optimized_send_count);
+                                        self.count(block, Counter::inline_cfunc_optimized_send_count, state);
                                         self.push_insn(block, Insn::CCall { cfunc: cfunc_ptr, recv, args, name, owner, return_type, elidable })
                                     } else {
                                         if get_option!(stats) {
@@ -6250,7 +6262,7 @@ impl Function {
                 self.push_insn(block, Insn::PushInlineFrame {
                     iseq, cme, recv, num_args: args.len().try_into().unwrap(), block: call_block, state, exit_state,
                 });
-                self.count(block, Counter::inline_iseq_optimized_send_count);
+                self.count(block, Counter::inline_iseq_optimized_send_count, state);
                 self.push_insn(block, Insn::Jump(BranchEdge {
                     target: callee_entry_body_block,
                     args: vec![],
@@ -8597,7 +8609,7 @@ impl Function {
         // 0 profiles: Generate a recompile exit or a fallback. No need for new HIR blocks.
         if profiles.is_empty() {
             if self.policy.no_side_exits {
-                self.count(block, fallback_counter);
+                self.count(block, fallback_counter, exit_id);
                 let result = emit_fallback(self, block);
                 assert_eq!(has_result, result.is_some());
                 return Some((block, result));
@@ -8635,7 +8647,7 @@ impl Function {
                     let matches = self.push_insn(block, Insn::IsBitEqual { left: actual, right: expected });
                     let fallback_block = self.new_block(insn_idx);
                     self.push_insn(block, branch(matches, optimized_block, fallback_block));
-                    self.count(fallback_block, fallback_counter);
+                    self.count(fallback_block, fallback_counter, exit_id);
                     let fallback_result = emit_fallback(self, fallback_block);
                     self.push_insn(fallback_block, Insn::Jump(result_edge(join_block, fallback_result)));
                 } else {
@@ -8684,7 +8696,7 @@ impl Function {
                 if fun.assume_ivar_read_ractor_independent(block, profiled_type.shape(), exit_id) {
                     fun.load_ivar(block, self_param, profiled_type, id)
                 } else {
-                    fun.count(block, Counter::getivar_fallback_multi_ractor);
+                    fun.count(block, Counter::getivar_fallback_multi_ractor, exit_id);
                     fun.push_insn(block, Insn::GetIvar { self_val: self_param, id, ic, state: exit_id })
                 }
             ),
@@ -8709,7 +8721,7 @@ impl Function {
     ) -> Option<BlockId> {
         if specs.is_empty() {
             if let Some(counter) = unoptimized_reason {
-                self.count(block, counter);
+                self.count(block, counter, exit_id);
                 self.push_insn(block, Insn::SetIvar { self_val: self_param, id, ic, val, state: exit_id });
                 return Some(block);
             }
@@ -9473,21 +9485,21 @@ fn add_iseq_to_hir(
                             if summary.is_monomorphic() {
                                 let profiled_type = summary.bucket(0);
                                 if unsafe { rb_IMEMO_TYPE_P(profiled_type.class(), imemo_iseq) == 1 } {
-                                    fun.count(block, Counter::invokeblock_handler_monomorphic_iseq);
+                                    fun.count(block, Counter::invokeblock_handler_monomorphic_iseq, exit_id);
                                 } else if profiled_type.flags().is_ifunc_block_handler() {
-                                    fun.count(block, Counter::invokeblock_handler_monomorphic_ifunc);
+                                    fun.count(block, Counter::invokeblock_handler_monomorphic_ifunc, exit_id);
                                 } else {
-                                    fun.count(block, Counter::invokeblock_handler_monomorphic_other);
+                                    fun.count(block, Counter::invokeblock_handler_monomorphic_other, exit_id);
                                 }
                             } else if summary.is_skewed_polymorphic() || summary.is_polymorphic() {
-                                fun.count(block, Counter::invokeblock_handler_polymorphic);
+                                fun.count(block, Counter::invokeblock_handler_polymorphic, exit_id);
                             } else if summary.is_skewed_megamorphic() || summary.is_megamorphic() {
-                                fun.count(block, Counter::invokeblock_handler_megamorphic);
+                                fun.count(block, Counter::invokeblock_handler_megamorphic, exit_id);
                             } else {
-                                fun.count(block, Counter::invokeblock_handler_no_profiles);
+                                fun.count(block, Counter::invokeblock_handler_no_profiles, exit_id);
                             }
                         } else {
-                            fun.count(block, Counter::invokeblock_handler_no_profiles);
+                            fun.count(block, Counter::invokeblock_handler_no_profiles, exit_id);
                         }
                     }
                 }
