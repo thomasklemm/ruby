@@ -114,6 +114,16 @@ pub struct ZJITState {
     /// Counter pointers for all calls to any kind of C function from JIT code
     ccall_counter_pointers: HashMap<String, Box<u64>>,
 
+    /// Counter pointers for C methods inlined into HIR (stats-only measurement)
+    inlined_cfunc_counter_pointers: HashMap<String, Box<u64>>,
+
+    /// Counter pointers for C methods called as frameless leaf CCalls (stats-only measurement)
+    leaf_cfunc_counter_pointers: HashMap<String, Box<u64>>,
+
+    /// Runtime counts of C methods reached through a dynamic send fallback, keyed by
+    /// (cme address, reason string address) with the name resolved on first hit
+    fallback_cfunc_counters: HashMap<(usize, usize), (String, u64)>,
+
     /// Counter pointers for access counts of ISEQs accessed by JIT code
     iseq_calls_count_pointers: HashMap<String, Box<u64>>,
 
@@ -204,6 +214,9 @@ impl ZJITState {
             full_frame_cfunc_counter_pointers: HashMap::new(),
             not_annotated_frame_cfunc_counter_pointers: HashMap::new(),
             ccall_counter_pointers: HashMap::new(),
+            inlined_cfunc_counter_pointers: HashMap::new(),
+            leaf_cfunc_counter_pointers: HashMap::new(),
+            fallback_cfunc_counters: HashMap::new(),
             iseq_calls_count_pointers: HashMap::new(),
             perfetto_tracer,
             jit_frames: vec![],
@@ -300,6 +313,21 @@ impl ZJITState {
     /// Get a mutable reference to non-annotated cfunc counter pointers
     pub fn get_not_annotated_cfunc_counter_pointers() -> &'static mut HashMap<String, Box<u64>> {
         &mut ZJITState::get_instance().not_annotated_frame_cfunc_counter_pointers
+    }
+
+    /// Get a mutable reference to inlined cfunc counter pointers
+    pub fn get_inlined_cfunc_counter_pointers() -> &'static mut HashMap<String, Box<u64>> {
+        &mut ZJITState::get_instance().inlined_cfunc_counter_pointers
+    }
+
+    /// Get a mutable reference to leaf cfunc counter pointers
+    pub fn get_leaf_cfunc_counter_pointers() -> &'static mut HashMap<String, Box<u64>> {
+        &mut ZJITState::get_instance().leaf_cfunc_counter_pointers
+    }
+
+    /// Get a mutable reference to fallback cfunc counters
+    pub fn get_fallback_cfunc_counters() -> &'static mut HashMap<(usize, usize), (String, u64)> {
+        &mut ZJITState::get_instance().fallback_cfunc_counters
     }
 
     /// Get a mutable reference to ccall counter pointers
@@ -553,6 +581,21 @@ pub extern "C" fn rb_zjit_record_exit_stack(reason: *const std::ffi::c_char) {
     };
 
     tracer.write_event("side_exit", reason_str, &frames);
+}
+
+/// Count a C method reached through a dynamic send fallback (--zjit-stats only).
+/// Called by rb_zjit_count_fallback_callee() after the fallback call returns.
+#[unsafe(no_mangle)]
+pub extern "C" fn rb_zjit_record_fallback_cfunc(cme: *const crate::cruby::rb_callable_method_entry_t, reason: *const std::ffi::c_char) {
+    if !zjit_enabled_p() {
+        return;
+    }
+    let entry = ZJITState::get_fallback_cfunc_counters().entry((cme as usize, reason as usize)).or_insert_with(|| {
+        let name = crate::hir::qualified_method_name(unsafe { (*cme).owner }, unsafe { (*cme).called_id });
+        let reason = if reason.is_null() { "unknown" } else { unsafe { std::ffi::CStr::from_ptr(reason).to_str().unwrap_or("unknown") } };
+        (format!("{name} ({reason})"), 0)
+    });
+    entry.1 += 1;
 }
 
 /// Record a backtrace with ZJIT fallbacks as a Perfetto trace event

@@ -402,6 +402,21 @@ rb_zjit_array_aref_with_adjusted_index(VALUE ary, rb_len_t index, VALUE *out)
     }
 }
 
+void rb_zjit_record_fallback_cfunc(const rb_callable_method_entry_t *cme, const char *reason);
+
+// Count the C method a dynamic send fallback just called (--zjit-stats only, measurement).
+// cd->cc holds the call cache the fallback looked up for this call.
+void
+rb_zjit_count_fallback_callee(const struct rb_call_data *cd, const char *reason)
+{
+    const struct rb_callcache *cc = cd->cc;
+    if (!cc) return;
+    const rb_callable_method_entry_t *cme = vm_cc_cme(cc);
+    if (cme && cme->def && cme->def->type == VM_METHOD_TYPE_CFUNC) {
+        rb_zjit_record_fallback_cfunc(cme, reason);
+    }
+}
+
 VALUE rb_nil_to_s(VALUE obj);
 VALUE rb_true_to_s(VALUE obj);
 VALUE rb_false_to_s(VALUE obj);

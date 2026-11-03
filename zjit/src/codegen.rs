@@ -1620,6 +1620,20 @@ fn gen_trace_send_fallback(asm: &mut Assembler, reason: &SendFallbackReason) {
     gen_trace_fallback(asm, &format!("{reason}"));
 }
 
+/// Count the C method a dynamic send fallback reached (--zjit-stats only, measurement)
+fn gen_count_fallback_callee(asm: &mut Assembler, cd: *const rb_call_data, reason: &SendFallbackReason) {
+    if !get_option!(stats) {
+        return;
+    }
+    let reason_ptr = std::ffi::CString::new(format!("{reason}"))
+        .unwrap_or_else(|_| std::ffi::CString::new("unknown").unwrap())
+        .into_raw() as *const u8;
+    unsafe extern "C" {
+        fn rb_zjit_count_fallback_callee(cd: VALUE, reason: *const u8);
+    }
+    asm_ccall!(asm, rb_zjit_count_fallback_callee, Opnd::const_ptr(cd), Opnd::const_ptr(reason_ptr));
+}
+
 /// Compile a dynamic dispatch with block
 fn gen_send(
     jit: &mut JITState,
@@ -1638,11 +1652,13 @@ fn gen_send(
     unsafe extern "C" {
         fn rb_vm_send(ec: EcPtr, cfp: CfpPtr, cd: VALUE, blockiseq: IseqPtr) -> VALUE;
     }
-    asm_ccall!(
+    let ret = asm_ccall!(
         asm,
         rb_vm_send,
         EC, CFP, Opnd::const_ptr(cd), VALUE::from(blockiseq).into()
-    )
+    );
+    gen_count_fallback_callee(asm, cd, &reason);
+    ret
 }
 
 /// Compile a dynamic dispatch with `...`
@@ -1664,11 +1680,13 @@ fn gen_send_forward(
     unsafe extern "C" {
         fn rb_vm_sendforward(ec: EcPtr, cfp: CfpPtr, cd: VALUE, blockiseq: IseqPtr) -> VALUE;
     }
-    asm_ccall!(
+    let ret = asm_ccall!(
         asm,
         rb_vm_sendforward,
         EC, CFP, Opnd::const_ptr(cd), VALUE::from(blockiseq).into()
-    )
+    );
+    gen_count_fallback_callee(asm, cd, &reason);
+    ret
 }
 
 /// Compile a dynamic dispatch without block
@@ -1688,11 +1706,13 @@ fn gen_send_without_block(
     unsafe extern "C" {
         fn rb_vm_opt_send_without_block(ec: EcPtr, cfp: CfpPtr, cd: VALUE) -> VALUE;
     }
-    asm_ccall!(
+    let ret = asm_ccall!(
         asm,
         rb_vm_opt_send_without_block,
         EC, CFP, Opnd::const_ptr(cd)
-    )
+    );
+    gen_count_fallback_callee(asm, cd, &reason);
+    ret
 }
 
 /// Push an interpreter frame for an inlined callee. This is the same as the frame push
@@ -2175,11 +2195,13 @@ fn gen_invokesuper(
     unsafe extern "C" {
         fn rb_vm_invokesuper(ec: EcPtr, cfp: CfpPtr, cd: VALUE, blockiseq: IseqPtr) -> VALUE;
     }
-    asm_ccall!(
+    let ret = asm_ccall!(
         asm,
         rb_vm_invokesuper,
         EC, CFP, Opnd::const_ptr(cd), VALUE::from(blockiseq).into()
-    )
+    );
+    gen_count_fallback_callee(asm, cd, &reason);
+    ret
 }
 
 /// Compile a dynamic dispatch for `super` with `...`
@@ -2200,11 +2222,13 @@ fn gen_invokesuperforward(
     unsafe extern "C" {
         fn rb_vm_invokesuperforward(ec: EcPtr, cfp: CfpPtr, cd: VALUE, blockiseq: IseqPtr) -> VALUE;
     }
-    asm_ccall!(
+    let ret = asm_ccall!(
         asm,
         rb_vm_invokesuperforward,
         EC, CFP, Opnd::const_ptr(cd), VALUE::from(blockiseq).into()
-    )
+    );
+    gen_count_fallback_callee(asm, cd, &reason);
+    ret
 }
 
 const STR_INLINE_STORE_MAX_BYTES: usize = 128;

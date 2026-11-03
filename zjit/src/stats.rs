@@ -785,6 +785,11 @@ pub extern "C" fn rb_zjit_reset_stats_bang(_ec: EcPtr, _self: VALUE) -> VALUE {
         ZJITState::get_not_annotated_cfunc_counter_pointers().iter_mut()
             .for_each(|b| { **(b.1) = 0; });
 
+        // Reset dispatch measurement counters
+        ZJITState::get_inlined_cfunc_counter_pointers().iter_mut().for_each(|b| { **(b.1) = 0; });
+        ZJITState::get_leaf_cfunc_counter_pointers().iter_mut().for_each(|b| { **(b.1) = 0; });
+        ZJITState::get_fallback_cfunc_counters().iter_mut().for_each(|b| { b.1.1 = 0; });
+
         // Reset ccall counters
         ZJITState::get_ccall_counter_pointers().iter_mut()
             .for_each(|b| { **(b.1) = 0; });
@@ -953,6 +958,21 @@ pub extern "C" fn rb_zjit_stats(_ec: EcPtr, _self: VALUE, target_key: VALUE) -> 
     for (signature, counter) in not_annotated_cfuncs.iter() {
         let key_string = format!("not_annotated_cfuncs_{signature}");
         set_stat_usize!(hash, &key_string, **counter);
+    }
+
+    // Set dispatch measurement counters
+    for (signature, counter) in ZJITState::get_inlined_cfunc_counter_pointers().iter() {
+        set_stat_usize!(hash, &format!("inlined_cfuncs_{signature}"), **counter);
+    }
+    for (signature, counter) in ZJITState::get_leaf_cfunc_counter_pointers().iter() {
+        set_stat_usize!(hash, &format!("leaf_cfuncs_{signature}"), **counter);
+    }
+    let mut fallback_cfuncs: std::collections::HashMap<&str, u64> = std::collections::HashMap::new();
+    for (name, count) in ZJITState::get_fallback_cfunc_counters().values() {
+        *fallback_cfuncs.entry(name.as_str()).or_insert(0) += *count;
+    }
+    for (signature, count) in fallback_cfuncs {
+        set_stat_usize!(hash, &format!("fallback_cfuncs_{signature}"), count);
     }
 
     // Set ccall counters

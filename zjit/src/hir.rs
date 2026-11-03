@@ -5448,6 +5448,9 @@ impl Function {
                                                 let insns = std::mem::take(&mut fun.blocks[tmp_block].insns);
                                                 fun.blocks[block].insns.extend(insns);
                                                 fun.count(block, Counter::inline_cfunc_optimized_send_count);
+                                                if get_option!(stats) {
+                                                    fun.count_cfunc_in(block, cme, ZJITState::get_inlined_cfunc_counter_pointers());
+                                                }
                                                 fun.make_equal_to(send_insn_id, replacement);
                                                 if fun.type_of(replacement).bit_equal(types::Any) {
                                                     // Not set yet; infer type
@@ -5460,6 +5463,9 @@ impl Function {
                                             // Only allow leaf calls if we don't have a block argument
                                             if props.leaf && props.no_gc {
                                                 fun.count(block, Counter::inline_cfunc_optimized_send_count);
+                                                if get_option!(stats) {
+                                                    fun.count_cfunc_in(block, cme, ZJITState::get_leaf_cfunc_counter_pointers());
+                                                }
                                                 let owner = unsafe { (*cme).owner };
                                                 let ccall = fun.push_insn(block, Insn::CCall { cfunc: cfunc_ptr, recv, args, name, owner, return_type, elidable });
                                                 fun.insn_types[ccall] = fun.infer_type(ccall);
@@ -5515,6 +5521,9 @@ impl Function {
                                                 let insns = std::mem::take(&mut fun.blocks[tmp_block].insns);
                                                 fun.blocks[block].insns.extend(insns);
                                                 fun.count(block, Counter::inline_cfunc_optimized_send_count);
+                                                if get_option!(stats) {
+                                                    fun.count_cfunc_in(block, cme, ZJITState::get_inlined_cfunc_counter_pointers());
+                                                }
                                                 fun.make_equal_to(send_insn_id, replacement);
                                                 if fun.type_of(replacement).bit_equal(types::Any) {
                                                     // Not set yet; infer type
@@ -5527,6 +5536,9 @@ impl Function {
                                             // Only allow inline calls if they are leaf, don't allocate, and don't have a block argument
                                             if props.leaf && props.no_gc {
                                                 fun.count(block, Counter::inline_cfunc_optimized_send_count);
+                                                if get_option!(stats) {
+                                                    fun.count_cfunc_in(block, cme, ZJITState::get_leaf_cfunc_counter_pointers());
+                                                }
                                                 let owner = unsafe { (*cme).owner };
                                                 let ccall = fun.push_insn(block, Insn::CCall { cfunc: cfunc_ptr, recv, args, name, owner, return_type, elidable });
                                                 fun.insn_types[ccall] = fun.infer_type(ccall);
@@ -6584,10 +6596,14 @@ impl Function {
     }
 
     fn count_not_inlined_cfunc(&mut self, block: BlockId, cme: *const rb_callable_method_entry_t) {
+        self.count_cfunc_in(block, cme, ZJITState::get_not_inlined_cfunc_counter_pointers());
+    }
+
+    /// Count a C method call in one of the per-method dispatch maps (--zjit-stats only)
+    fn count_cfunc_in(&mut self, block: BlockId, cme: *const rb_callable_method_entry_t, not_inlined_cfunc_counter_pointers: &mut HashMap<String, Box<u64>>) {
         let owner = unsafe { (*cme).owner };
         let called_id = unsafe { (*cme).called_id };
         let qualified_method_name = qualified_method_name(owner, called_id);
-        let not_inlined_cfunc_counter_pointers = ZJITState::get_not_inlined_cfunc_counter_pointers();
         let counter_ptr = not_inlined_cfunc_counter_pointers.entry(qualified_method_name.clone()).or_insert_with(|| Box::new(0));
         let counter_ptr = &mut **counter_ptr as *mut u64;
 
