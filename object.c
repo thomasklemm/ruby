@@ -4738,6 +4738,23 @@ InitVM_Object(void)
     rb_undef_method(CLASS_OF(rb_cFalseClass), "new");
 }
 
+/* Kernel#dup in Ruby: allocation and init_copy (shape, ivars, flags, no singleton class). */
+static VALUE
+rb_obj_dup_alloc_copy(rb_execution_context_t *ec, VALUE obj)
+{
+    VALUE dup;
+    switch (OBJ_BUILTIN_TYPE(obj)) {
+      case T_HASH:
+        dup = rb_hash_alloc_copy(rb_obj_class(obj), obj);
+        break;
+      default:
+        dup = rb_obj_alloc(rb_obj_class(obj));
+        break;
+    }
+    init_copy(dup, obj);
+    return dup;
+}
+
 #include "kernel.rbinc"
 #include "nilclass.rbinc"
 #include "basic_object.rbinc"

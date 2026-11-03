@@ -48,6 +48,7 @@ module Kernel
     Primitive.rb_obj_clone2(freeze)
   end
 
+
   #
   #  call-seq:
   #     obj.frozen?    -> true or false
@@ -280,5 +281,44 @@ module Kernel
     else
       Primitive.rb_f_integer(arg, base, exception)
     end
+  end
+end
+
+# A separate module body, so that the hook's definitions get public default
+# visibility rather than the module_function state the body above ends in.
+module Kernel
+  # Kernel#dup and Kernel#initialize_dup in Ruby (Shopify/ruby#1058 design
+  # prototype). Like Array#each, they replace the C methods only when a JIT is
+  # enabled, unless Z7_DUP_RUBY is set in the environment (interpreter cost).
+  # The C versions stay for the interpreter and for C callers of rb_obj_dup.
+  kernel_dup_in_ruby = proc do
+    if Primitive.cexpr!('RBOOL(rb_method_basic_definition_p(rb_cObject, rb_intern("dup")))')
+      undef :dup
+
+      def dup
+        Primitive.attr! :c_trace
+        return self if Primitive.cexpr!('RBOOL(special_object_p(self))')
+        copy = Primitive.rb_obj_dup_alloc_copy
+        # initialize_dup is private; rb_funcall ignores visibility, __send__ is
+        # the only Ruby spelling of that.
+        copy.__send__(:initialize_dup, self)
+        copy
+      end
+    end
+
+    if Primitive.cexpr!('RBOOL(rb_method_basic_definition_p(rb_cObject, idInitialize_dup))')
+      undef :initialize_dup
+
+      private def initialize_dup(orig)
+        Primitive.attr! :c_trace
+        initialize_copy(orig)
+        self
+      end
+    end
+  end
+  if Primitive.cexpr!('RBOOL(getenv("Z7_DUP_RUBY") != NULL)')
+    kernel_dup_in_ruby.call
+  else
+    with_jit(&kernel_dup_in_ruby)
   end
 end
