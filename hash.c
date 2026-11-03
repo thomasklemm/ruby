@@ -5475,6 +5475,16 @@ rb_hash_merge2_bulk(VALUE hash, rb_len_t argc, const VALUE *argv, bool dup)
     return val;
 }
 
+// h1 is a hash we just created, sized for its own entries. Merge h2 into it
+// in place when its embedded table can hold the result; otherwise copy into a
+// right-sized hash rather than converting h1 to an st_table.
+VALUE
+rb_hash_merge2_fit(VALUE h1, VALUE h2)
+{
+    bool fits = !RHASH_AR_TABLE_P(h1) || RHASH_SIZE(h1) + RHASH_SIZE(h2) <= RHASH_AR_TABLE_MAX_BOUND(h1);
+    return rb_hash_merge2(h1, h2, !fits);
+}
+
 VALUE
 rb_hash_merge2(VALUE h1, VALUE h2, bool dup)
 {

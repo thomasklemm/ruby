@@ -4531,6 +4531,16 @@ m_core_hash_merge_kwd(VALUE recv, VALUE hash, VALUE kw)
 }
 
 static VALUE
+m_core_hash_merge_fit_kwd(VALUE recv, VALUE hash, VALUE kw)
+{
+    // `hash` is a fresh `newhash`: merge in place if the result fits it.
+    if (!NIL_P(kw)) {
+        REWIND_CFP(hash = rb_hash_merge2_fit(hash, rb_to_hash_type(kw)));
+    }
+    return hash;
+}
+
+static VALUE
 m_core_hash_merge_bang_kwd(VALUE recv, VALUE hash, VALUE kw)
 {
     // We own `hash` we should mutate it in place if possible.
@@ -4760,6 +4770,7 @@ Init_VM(void)
     rb_define_method_id(klass, id_core_hash_merge_bang_ptr, m_core_hash_merge_bang_ptr, -1);
     rb_define_method_id(klass, id_core_hash_merge_kwd, m_core_hash_merge_kwd, 2);
     rb_define_method_id(klass, id_core_hash_merge_bang_kwd, m_core_hash_merge_bang_kwd, 2);
+    rb_define_method_id(klass, id_core_hash_merge_fit_kwd, m_core_hash_merge_fit_kwd, 2);
     rb_define_method_id(klass, id_core_hash_coerce, m_core_hash_coerce, 1);
     rb_define_method_id(klass, id_core_raise, f_raise, -1);
     rb_define_method_id(klass, id_core_sprintf, f_sprintf, -1);

@@ -1479,6 +1479,7 @@ pm_compile_hash_elements(rb_iseq_t *iseq, const pm_node_t *node, const pm_node_l
     int stack_length = 0;
     bool first_chunk = true;
     bool owned_hash = false;
+    bool fresh_hash = false;
 
     // This is an optimization wherein we keep track of whether or not the
     // previous element was a static literal. If it was, then we do not attempt
@@ -1495,6 +1496,7 @@ pm_compile_hash_elements(rb_iseq_t *iseq, const pm_node_t *node, const pm_node_l
             PUSH_SEQ(ret, anchor);                                                                \
             PUSH_INSN1(ret, location, newhash, INT2FIX(stack_length));                            \
             first_chunk = false;                                                                  \
+            fresh_hash = true;                                                                    \
         }                                                                                         \
         else {                                                                                    \
             PUSH_INSN1(ret, location, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));       \
@@ -1662,7 +1664,7 @@ pm_compile_hash_elements(rb_iseq_t *iseq, const pm_node_t *node, const pm_node_l
                         PUSH_SEND(ret, location, id_core_hash_merge_bang_kwd, INT2FIX(2));
                     }
                     else {
-                        PUSH_SEND(ret, location, id_core_hash_merge_kwd, INT2FIX(2));
+                        PUSH_SEND(ret, location, fresh_hash ? id_core_hash_merge_fit_kwd : id_core_hash_merge_kwd, INT2FIX(2));
                         owned_hash = true;
                     }
                 }
@@ -1733,7 +1735,7 @@ pm_setup_args_core(const pm_arguments_node_t *arguments_node, const pm_node_t *b
                         PUSH_INSN1(ret, location, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));
                         PUSH_INSN1(ret, location, newhash, INT2FIX(0));
                         pm_compile_hash_elements(iseq, argument, elements, 0, Qundef, true, ret, scope_node);
-                        PUSH_SEND(ret, location, id_core_hash_merge_kwd, INT2FIX(2));
+                        PUSH_SEND(ret, location, id_core_hash_merge_fit_kwd, INT2FIX(2));
                     }
                     else {
                         pm_compile_hash_elements(iseq, argument, elements, 0, Qundef, true, ret, scope_node);
@@ -8198,16 +8200,13 @@ pm_compile_forwarding_super_node(rb_iseq_t *iseq, const pm_forwarding_super_node
         int local_size = local_body->local_table_size;
         argc++;
 
-        PUSH_INSN1(args, *location, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));
-
+        // Without a keyword rest, `newhash` builds the keywords in one hash.
         if (local_body->param.flags.has_kwrest) {
+            PUSH_INSN1(args, *location, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));
             int idx = local_body->local_table_size - local_keyword->rest_start;
             PUSH_GETLOCAL(args, *location, idx, depth);
             RUBY_ASSERT(local_keyword->num > 0);
             PUSH_SEND(args, *location, rb_intern("dup"), INT2FIX(0));
-        }
-        else {
-            PUSH_INSN1(args, *location, newhash, INT2FIX(0));
         }
         int i = 0;
         for (; i < local_keyword->num; ++i) {
@@ -8222,7 +8221,12 @@ pm_compile_forwarding_super_node(rb_iseq_t *iseq, const pm_forwarding_super_node
             PUSH_GETLOCAL(args, *location, idx, depth);
         }
 
-        PUSH_SEND(args, *location, id_core_hash_merge_ptr, INT2FIX(i * 2 + 1));
+        if (local_body->param.flags.has_kwrest) {
+            PUSH_SEND(args, *location, id_core_hash_merge_ptr, INT2FIX(i * 2 + 1));
+        }
+        else {
+            PUSH_INSN1(args, *location, newhash, INT2FIX(i * 2));
+        }
         flag |= VM_CALL_KW_SPLAT| VM_CALL_KW_SPLAT_MUT;
     }
     else if (local_body->param.flags.has_kwrest) {

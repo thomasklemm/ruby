@@ -306,6 +306,11 @@ class TestAllocation < Test::Unit::TestCase
         check_allocations(0, 1, "keyword_splat(a: 2#{block})")
         check_allocations(0, 1, "keyword_splat(*empty_array, a: 2#{block})")
         check_allocations(0, 1, "keyword_splat(a:2, **empty_hash#{block})")
+        check_allocations(0, 1, "keyword_splat(a: nill, **empty_hash#{block})")
+        # Starts from a frozen literal template, so it merges through hash_merge_ptr (control)
+        check_allocations(0, 1, "keyword_splat(a: 2, b: nill, **hash1, c: nill#{block})")
+        # Starts from a dynamic newhash, so the splat merges into it in place
+        check_allocations(0, 1, "keyword_splat(b: nill, **hash1#{block})")
         check_allocations(0, 1, "keyword_splat(**empty_hash, a: 2#{block})")
 
         check_allocations(0, 1, "keyword_splat(**nil#{block})")
@@ -334,6 +339,7 @@ class TestAllocation < Test::Unit::TestCase
         check_allocations(0, 1, "keyword_and_keyword_splat(a: 2#{block})")
         check_allocations(0, 1, "keyword_and_keyword_splat(*empty_array, a: 2#{block})")
         check_allocations(0, 1, "keyword_and_keyword_splat(a:2, **empty_hash#{block})")
+        check_allocations(0, 1, "keyword_and_keyword_splat(a: nill, **empty_hash#{block})")
         check_allocations(0, 1, "keyword_and_keyword_splat(**empty_hash, a: 2#{block})")
 
         check_allocations(0, 1, "keyword_and_keyword_splat(**nil#{block})")
@@ -352,6 +358,16 @@ class TestAllocation < Test::Unit::TestCase
 
         check_allocations(0, 1, "keyword_and_keyword_splat(*empty_array, a: 2, **empty_hash#{block})")
         check_allocations(0, 1, "keyword_and_keyword_splat(*empty_array, **hash1, **empty_hash#{block})")
+      RUBY
+    end
+
+    def test_zsuper_keyword_parameters
+      check_allocations(<<~RUBY)
+        extend(Module.new { def zsuper_kw(a: 1, b: 2#{block}) = nil })
+        def self.zsuper_kw(a: 1, b: 2#{block}); super; end
+
+        check_allocations(0, 1, "zsuper_kw(#{only_block})")
+        check_allocations(0, 1, "zsuper_kw(a: nill#{block})")
       RUBY
     end
 
@@ -905,6 +921,9 @@ class TestAllocation < Test::Unit::TestCase
         end
       end.join("\n")
     end
+
+    # zsuper is not available in procs
+    undef_method :test_zsuper_keyword_parameters
 
     # Generic argument forwarding not supported in proc definitions
     undef_method :test_argument_forwarding
