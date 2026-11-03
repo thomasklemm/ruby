@@ -6318,6 +6318,44 @@ fn test_attr_reader() {
     assert_snapshot!(assert_compiles("c = C.new; [test(c), test(c)]"), @"[4, 4]");
 }
 
+// The final version of an ISEQ reads an attr_reader inline only for the profiled shape.
+// Other shapes take the GetIvar fallback, and redefining the reader still invalidates it.
+#[test]
+fn test_attr_reader_on_final_version() {
+    rb_zjit_prepare_options();
+    let old_call_threshold = unsafe { crate::options::rb_zjit_call_threshold };
+    let old_max_versions = get_option!(max_versions);
+    set_call_threshold(2);
+    set_max_versions(2);
+    let result = inspect(r#"
+        class C
+          attr_reader :foo
+          def initialize(foo, bar = nil)
+            @bar = bar if bar
+            @foo = foo
+          end
+        end
+
+        X = 10
+        def test(o) = [o.foo, X]
+        o = C.new(1)
+        test(o); test(o)                  # profile + compile the first version
+        Object.send(:remove_const, :X)
+        X = 20                            # invalidate it
+        test(o); test(o)                  # profile + compile the final version
+        hit = test(o)
+        miss = test(C.new(2, :bar))       # same class, other shape
+        unset = test(C.allocate)          # same class, no @foo
+        class C
+          def foo = :redefined
+        end
+        [hit, miss, unset, test(o)]
+    "#);
+    set_max_versions(old_max_versions);
+    set_call_threshold(old_call_threshold);
+    assert_snapshot!(result, @"[[1, 20], [2, 20], [nil, 20], [:redefined, 20]]");
+}
+
 #[test]
 fn test_attr_accessor_getivar() {
     eval("

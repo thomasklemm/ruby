@@ -4967,7 +4967,7 @@ impl Function {
     /// Also try and inline constant caches, specialize object allocations, and more.
     fn type_specialize(&mut self) {
         let send_counters = std::mem::take(&mut self.send_counters);
-        for block in self.reverse_post_order() {
+        for mut block in self.reverse_post_order() {
             let old_insns = std::mem::take(&mut self.blocks[block].insns);
             assert!(self.blocks[block].insns.is_empty());
             for insn_id in old_insns {
@@ -5239,10 +5239,24 @@ impl Function {
                             if let Some(profiled_type) = profiled_type {
                                 recv = self.guard_type_recompile(block, recv, Type::from_profiled_type(profiled_type), state, Recompile);
 
-                                let replacement = self.try_emit_optimized_getivar(block, recv, id, profiled_type, state).unwrap_or_else(|counter| {
-                                    self.count(block, counter);
-                                    self.push_insn(block, Insn::GetIvar { self_val: recv, id, ic: std::ptr::null(), state })
-                                });
+                                let replacement = match self.try_emit_optimized_getivar(block, recv, id, profiled_type, state) {
+                                    Ok(replacement) => replacement,
+                                    // The final version of an ISEQ can't guard the shape with a side exit, but it
+                                    // can branch on it the way getinstancevariable does, so the profiled shape is
+                                    // still read inline and only other shapes call rb_ivar_get.
+                                    Err(Counter::getivar_fallback_no_side_exits) => {
+                                        let insn_idx = self.frame_state(state).insn_idx() as u32;
+                                        let recv = self.guard_heap(block, recv, state);
+                                        let (join_block, result) = self.dispatch_getivar(&[profiled_type], block, insn_idx, recv, id, std::ptr::null(), state)
+                                            .expect("dispatch_getivar only side-exits without a profiled shape");
+                                        block = join_block;
+                                        result
+                                    }
+                                    Err(counter) => {
+                                        self.count(block, counter);
+                                        self.push_insn(block, Insn::GetIvar { self_val: recv, id, ic: std::ptr::null(), state })
+                                    }
+                                };
                                 self.make_equal_to(insn_id, replacement);
                             } else {
                                 // No shape information, just static class information

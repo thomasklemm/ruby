@@ -13663,6 +13663,65 @@ mod hir_opt_tests {
     }
 
     #[test]
+    fn test_inline_attr_reader_on_final_version() {
+        // The final version can't guard the shape with a side exit, so it branches on the
+        // profiled shape and calls GetIvar only for other shapes. The constant reassignment
+        // invalidates the first version, so the next one is final.
+        set_max_versions(2);
+        eval("
+            class C
+              attr_reader :foo
+              def initialize = @foo = 1
+            end
+
+            X = 10
+            def test(o) = o.foo + X
+            o = C.new
+            test(o); test(o)
+            Object.send(:remove_const, :X)
+            X = 11
+        ");
+        assert_snapshot!(hir_string("test"), @"
+        fn test@<compiled>:8:
+        bb1():
+          EntryPoint interpreter
+          v1:BasicObject = LoadSelf
+          v2:CPtr = LoadSP
+          v3:BasicObject = LoadField v2, :o@0x1000
+          Jump bb3(v1, v3)
+        bb2():
+          EntryPoint JIT(0)
+          v6:BasicObject = LoadArg :self@0
+          v7:BasicObject = LoadArg :o@1
+          Jump bb3(v6, v7)
+        bb3(v9:BasicObject, v10:BasicObject):
+          PatchPoint NoSingletonClass(C@0x1008)
+          PatchPoint MethodRedefined(C@0x1008, foo@0x1010, cme:0x1018)
+          v32:ObjectSubclass[class_exact:C] = GuardType v10, ObjectSubclass[class_exact:C] recompile
+          v34:CShape = LoadField v32, :shape_id@0x1040
+          v36:CShape[0x1041] = Const CShape(0x1041)
+          v37:CBool = IsBitEqual v34, v36
+          CondBranch v37, bb5(), bb6()
+        bb5():
+          v41:BasicObject = LoadField v32, :@foo@0x1042
+          Jump bb4(v41)
+        bb6():
+          v39:BasicObject = GetIvar v32, :@foo
+          Jump bb4(v39)
+        bb4(v35:BasicObject):
+          PatchPoint NoEPEscape(test)
+          v19:BasicObject = GetConstantPath 0x1048
+          PatchPoint NoEPEscape(test)
+          PatchPoint MethodRedefined(Integer@0x1058, +@0x1060, cme:0x1068)
+          v45:Fixnum = GuardType v35, Fixnum recompile
+          v46:Fixnum = GuardType v19, Fixnum recompile
+          v47:Fixnum = FixnumAdd v45, v46
+          CheckInterrupts
+          Return v47
+        ");
+    }
+
+    #[test]
     fn test_inline_attr_accessor() {
         eval("
             class C
