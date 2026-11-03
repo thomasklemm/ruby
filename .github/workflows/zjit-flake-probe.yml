@@ -88,3 +88,7 @@ jobs:
             grep -E "PROBE" full.log || true
             grep -E "XFAIL|SIGABRT|FAIL \[" full.log | grep -q send_proc_block_arg_to_block_param_callee && echo "FULL shard=${{ matrix.shard }} run=$i TARGET_FAILED" || echo "FULL shard=${{ matrix.shard }} run=$i target_ok"
           done
+
+defaults:
+  run:
+    working-directory: build
