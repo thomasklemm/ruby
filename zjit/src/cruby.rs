@@ -1417,9 +1417,20 @@ pub mod test_utils {
         use crate::state::ZJITState;
         ensure_rubyvm(); // ZJITState is not available until the VM is booted
         let exits_before = crate::stats::total_exit_count();
+        let per_reason_before: Vec<u64> = crate::stats::EXIT_COUNTERS.iter().map(|c| unsafe { *crate::stats::counter_ptr(*c) }).collect();
+        let t0 = std::time::Instant::now();
         ZJITState::enable_assert_compiles();
         let result = inspect(program);
         ZJITState::disable_assert_compiles();
+        if exits_before != crate::stats::total_exit_count() {
+            for (i, c) in crate::stats::EXIT_COUNTERS.iter().enumerate() {
+                let now = unsafe { *crate::stats::counter_ptr(*c) };
+                if now != per_reason_before[i] {
+                    eprintln!("PROBE exit {} +{}", c.name(), now - per_reason_before[i]);
+                }
+            }
+            eprintln!("PROBE program took {:?}", t0.elapsed());
+        }
         assert_eq!(exits_before, crate::stats::total_exit_count(), "Program side-exited");
         result
     }

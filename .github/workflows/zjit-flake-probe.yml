@@ -1,0 +1,90 @@
+name: ZJIT flake probe
+on:
+  push:
+    branches:
+      - 'thomasklemm/zjit-flake-probe-*'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_NET_RETRY: 10
+  CARGO_HTTP_MULTIPLEXING: false
+  RUST_BACKTRACE: 1
+  ZJIT_RB_BUG: 1
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+        include:
+          - test_task: 'zjit-check'
+            configure: '--enable-yjit=dev --enable-zjit'
+            rust_version: "1.85.0"
+
+    env:
+      GITPULLOPTIONS: --no-tags origin ${{ github.ref }}
+
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /.github
+          persist-credentials: false
+
+      - name: Install libraries
+        uses: ./.github/actions/setup/macos
+
+      - uses: ./.github/actions/setup/directories
+        with:
+          srcdir: src
+          builddir: build
+          makeup: true
+          dummy-files: ${{ matrix.test_task == 'check' }}
+          # Set fetch-depth: 10 so that Launchable can receive commits information.
+          fetch-depth: 10
+
+      - name: Install Rust
+        if: ${{ matrix.rust_version }}
+        run: |
+          rustup install ${{ matrix.rust_version }} --profile minimal
+          rustup default ${{ matrix.rust_version }}
+
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        with:
+          tool: nextest@0.9
+        if: ${{ matrix.test_task == 'zjit-check' }}
+
+      - name: Run configure
+        run: ../src/configure -C --disable-install-doc ${{ matrix.configure }}
+
+      - run: make
+
+
+      - name: Single test, 60 runs
+        run: |
+          pass=0; fail=0
+          for i in $(seq 1 60); do
+            if make -s zjit-test ZJIT_TESTS=test_send_proc_block_arg_to_block_param_callee > single.log 2>&1; then
+              pass=$((pass+1))
+            else
+              fail=$((fail+1))
+              echo "--- run $i failed"
+              grep -E "PROBE|panicked|left:|right:|XFAIL|SIGABRT|execfail|No child|Summary" single.log
+            fi
+          done
+          echo "SINGLE shard=${{ matrix.shard }} pass=$pass fail=$fail"
+
+      - name: Full zjit-test, 4 runs
+        run: |
+          for i in 1 2 3 4; do
+            make -s zjit-test > full.log 2>&1 || true
+            echo "--- full run $i"
+            grep -E "Summary|^ +(FAIL|XFAIL|SIGABRT|SIGSEGV) \[" full.log | sort -u
+            grep -E "PROBE" full.log || true
+            grep -E "XFAIL|SIGABRT|FAIL \[" full.log | grep -q send_proc_block_arg_to_block_param_callee && echo "FULL shard=${{ matrix.shard }} run=$i TARGET_FAILED" || echo "FULL shard=${{ matrix.shard }} run=$i target_ok"
+          done
