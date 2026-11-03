@@ -4978,6 +4978,7 @@ impl Function {
         klass: VALUE,
         send_mid: ID,
         send_cme: *const rb_callable_method_entry_struct,
+        send: InsnId,
         flags: u32,
         args: &[InsnId],
         frame_state: InsnId,
@@ -4986,7 +4987,7 @@ impl Function {
         // Keyword arguments, splats, and `...` need a non-packed callinfo, and a block arg is
         // not supported for optimized methods (same as YJIT).
         if flags & VM_CALL_KWARG != 0 || unspecializable_call_type(flags) {
-            self.count_complex_call_features(block, flags, state);
+            self.count_complex_call_features(block, send, flags, state);
             return Err(ComplexArgPass);
         }
         // `send` without a method name raises ArgumentError; leave that to the interpreter.
@@ -5117,7 +5118,7 @@ impl Function {
                             }
                             if def_type == VM_METHOD_TYPE_OPTIMIZED
                                 && OptimizedMethodType::from(unsafe { get_cme_def_body_optimized_type(cme) }) == OptimizedMethodType::Send {
-                                match self.rewrite_opt_send(block, klass, mid, cme, flags, &args, send_frame_state, state) {
+                                match self.rewrite_opt_send(block, klass, mid, cme, insn_id, flags, &args, send_frame_state, state) {
                                     Ok(rewrite) => {
                                         cd = rewrite.cd;
                                         args = rewrite.args;
