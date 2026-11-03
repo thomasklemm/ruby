@@ -6106,6 +6106,52 @@ fn test_polymorphic_iseq_dispatch_same_site() {
 }
 
 #[test]
+fn test_polymorphic_send_shared_method_entry() {
+    set_call_threshold(4);
+    crate::options::enable_zjit_stats();
+    eval("
+        class Base
+          def self.lookup(x) = [:base, x]
+        end
+        MODELS = 6.times.map { Class.new(Base) }
+        def test(klass, x) = klass.lookup(x)
+        test(MODELS[0], 0); test(MODELS[1], 0); test(MODELS[0], 0); test(MODELS[1], 0)
+    ");
+    let fallbacks_before = crate::state::ZJITState::get_counters().send_fallback_send_polymorphic_fallback;
+    assert_snapshot!(assert_compiles("MODELS.map { test(_1, 1) }"), @"[[:base, 1], [:base, 1], [:base, 1], [:base, 1], [:base, 1], [:base, 1]]");
+    assert_eq!(fallbacks_before, crate::state::ZJITState::get_counters().send_fallback_send_polymorphic_fallback);
+}
+
+#[test]
+fn test_polymorphic_send_shared_method_entry_invalidation() {
+    set_call_threshold(4);
+    assert_snapshot!(inspect("
+        class Base
+          def self.lookup = :base
+          def self.method_missing(name, *) = name == :lookup ? :missing : super
+        end
+        MODELS = 8.times.map { Class.new(Base) }
+        def test(klass) = klass.lookup
+        test(MODELS[0]); test(MODELS[1]); test(MODELS[0]); test(MODELS[1])
+        results = [MODELS.map { test(_1) }]
+        def (MODELS[2]).lookup = :singleton
+        MODELS[3].singleton_class.prepend(Module.new { def lookup = [:prepended, super] })
+        MODELS[4].extend(Module.new { def lookup = :extended })
+        MODELS[5].singleton_class.send(:undef_method, :lookup)
+        MODELS[6].singleton_class.send(:private, :lookup)
+        results << MODELS.map { test(_1) rescue :no_method }
+        Base.singleton_class.class_eval { def lookup = :redefined }
+        results << MODELS.map { test(_1) rescue :no_method }
+        refinement = Module.new { refine(MODELS[7].singleton_class) { def lookup = :refined } }
+        using refinement
+        def test_refined(klass) = klass.lookup
+        test_refined(MODELS[0]); test_refined(MODELS[1]); test_refined(MODELS[0]); test_refined(MODELS[1])
+        results << MODELS.map { [test(_1), test_refined(_1)] rescue :no_method }
+        results
+    "), @"[[:base, :base, :base, :base, :base, :base, :base, :base], [:base, :base, :singleton, [:prepended, :base], :extended, :missing, :missing, :base], [:redefined, :redefined, :singleton, [:prepended, :redefined], :extended, :missing, :missing, :redefined], [[:redefined, :redefined], [:redefined, :redefined], [:singleton, :singleton], [[:prepended, :redefined], [:prepended, :redefined]], [:extended, :extended], [:missing, :missing], [:missing, :missing], [:redefined, :refined]]]");
+}
+
+#[test]
 fn test_recursive_fact() {
     assert_snapshot!(inspect("
         def fact(n)

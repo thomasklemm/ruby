@@ -386,6 +386,12 @@ rb_zjit_callable_method_entry_is_undefined(const rb_callable_method_entry_t *cme
     return UNDEFINED_METHOD_ENTRY_P(cme);
 }
 
+int
+rb_zjit_method_cme_is(VALUE recv, ID mid, const rb_callable_method_entry_t *cme)
+{
+    return rb_callable_method_entry(CLASS_OF(recv), mid) == cme;
+}
+
 VALUE rb_vm_get_untagged_block_handler(rb_control_frame_t *reg_cfp);
 bool rb_vm_once_done_value(ISE is, VALUE *result);
 
