@@ -1579,7 +1579,9 @@ gc_set_incremental_marking(rb_objspace_t *objspace, unsigned int value)
  * preserving the historical behavior for the smallest heap.
  */
 #define GC_INCREMENTAL_SWEEP_BYTES           (2048 * RVALUE_SLOT_SIZE)
-#define GC_INCREMENTAL_SWEEP_POOL_BYTES      (1024 * RVALUE_SLOT_SIZE)
+/* The pool is counted in slots for every heap: a byte budget leaves the large-slot heaps a
+ * single pooled page, and those sparse heaps then force "nofree" major GCs. */
+#define GC_INCREMENTAL_SWEEP_POOL_SLOT_COUNT 1024
 #define is_lazy_sweeping(objspace)           (GC_ENABLE_LAZY_SWEEP && has_sweeping_pages(objspace))
 /* In lazy sweeping or the previous incremental marking finished and did not yield a free page. */
 #define needs_continue_sweeping(objspace, heap) \
@@ -5845,7 +5847,6 @@ gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap)
     int swept_slots = 0;
     int pooled_slots = 0;
     int sweep_budget = GC_INCREMENTAL_SWEEP_BYTES / heap->slot_size;
-    int pool_budget = GC_INCREMENTAL_SWEEP_POOL_BYTES / heap->slot_size;
 
     if (sweep_page == NULL) return FALSE;
 
@@ -5894,7 +5895,7 @@ gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap)
             heap->freed_slots += ctx.freed_slots;
             heap->empty_slots += ctx.empty_slots;
 
-            if (pooled_slots < pool_budget) {
+            if (pooled_slots < GC_INCREMENTAL_SWEEP_POOL_SLOT_COUNT) {
                 heap_add_poolpage(objspace, heap, sweep_page);
                 pooled_slots += free_slots;
             }
