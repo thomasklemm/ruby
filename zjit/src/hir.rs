@@ -5699,11 +5699,8 @@ impl Function {
                         let local_payload = get_or_create_iseq_payload(frame_state_iseq);
                         let Some(current_cme) = local_payload.profile.get_super_method_entry(frame_state_insn_idx) else {
                             self.push_insn_id(block, insn_id);
-
-                            // The absence of the super CME could be due to a missing profile, but
-                            // if we've made it this far the value would have been deleted, indicating
-                            // that the call is at least polymorphic and possibly megamorphic.
-                            self.set_dynamic_send_reason(insn_id, SuperPolymorphic);
+                            let reason = if local_payload.profile.has_super_profile(frame_state_insn_idx) { SuperPolymorphic } else { SuperNoProfiles };
+                            self.set_dynamic_send_reason(insn_id, reason);
                             continue;
                         };
 
@@ -6634,7 +6631,8 @@ impl Function {
             assert!(self.blocks[block].insns.is_empty());
             for insn_id in old_insns {
                 match self.resolve(insn_id).insn(self) {
-                    &Insn::Send { state, reason: SendFallbackReason::SendNoProfiles, .. } => {
+                    &Insn::Send { state, reason: SendFallbackReason::SendNoProfiles, .. }
+                    | &Insn::InvokeSuper { state, reason: SendFallbackReason::SuperNoProfiles, .. } => {
                         self.push_insn(block, Insn::SideExit { state, reason: Box::new(SideExitReason::NoProfileSend), recompile: Some(Recompile) });
                         // SideExit is a terminator; don't add remaining instructions
                         break;

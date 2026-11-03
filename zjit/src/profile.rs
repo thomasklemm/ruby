@@ -495,6 +495,10 @@ impl IseqProfile {
             .map(SplatLengthDistributionSummary::new)
     }
 
+    pub fn has_super_profile(&self, insn_idx: YarvInsnIdx) -> bool {
+        self.super_cme.contains_key(&insn_idx)
+    }
+
     pub fn get_super_method_entry(&self, insn_idx: YarvInsnIdx) -> Option<*const rb_callable_method_entry_t> {
         let Some(entry) = self.super_cme.get(&insn_idx) else { return None };
         let summary = TypeDistributionSummary::new(entry);

@@ -3293,6 +3293,32 @@ fn test_invokesuper_with_include() {
 }
 
 #[test]
+fn test_invokesuper_reached_after_profiling() {
+    set_call_threshold(2);
+    crate::options::enable_zjit_stats();
+    eval("
+        class SuperParent
+          def get(k) = [:parent, k]
+        end
+        class SuperChild < SuperParent
+          def get(k, flag) = flag ? super(k) : k
+        end
+        SUPER_CHILD = SuperChild.new
+        def test(flag) = SUPER_CHILD.get(1, flag)
+        5.times { test(false) }
+        i = 0
+        while i < 20
+          test(true)
+          i += 1
+        end
+    ");
+    let counters = crate::state::ZJITState::get_counters();
+    let fallbacks_before = (counters.send_fallback_super_polymorphic, counters.send_fallback_super_fallback_no_profile);
+    assert_snapshot!(assert_compiles("test(true)"), @"[:parent, 1]");
+    assert_eq!(fallbacks_before, (counters.send_fallback_super_polymorphic, counters.send_fallback_super_fallback_no_profile));
+}
+
+#[test]
 fn test_invokesuper_with_prepend() {
     assert_snapshot!(inspect(r#"
         class A
