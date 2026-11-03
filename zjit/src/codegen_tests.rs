@@ -5071,6 +5071,49 @@ fn test_string_append_broken_coderange() {
 }
 
 #[test]
+fn test_string_append_polymorphic_string_arg() {
+    set_call_threshold(3);
+    eval(r#"
+        class MyString < String
+        end
+        def test(s, x) = s << x
+    "#);
+    assert_contains_opcode("test", YARVINSN_opt_ltlt);
+    // Profiled with a String and a String subclass, both stay on the String fast path.
+    assert_snapshot!(assert_compiles(r#"
+        s = +"a"
+        test(s, "b")
+        test(s, MyString.new("c"))
+        test(s, "d")
+        test(s, MyString.new("é"))
+        [s, s.encoding.name, s.valid_encoding?]
+    "#), @r#"["abcdé", "UTF-8", true]"#);
+}
+
+#[test]
+fn test_string_append_polymorphic_string_arg_then_other() {
+    set_call_threshold(3);
+    eval(r#"
+        class MyString < String
+        end
+        def test(s, x) = s << x
+    "#);
+    // A codepoint and a non-String fail the String guard and take the generic path.
+    assert_snapshot!(assert_compiles_allowing_exits(r#"
+        s = +"a"
+        test(s, "b")
+        test(s, MyString.new("c"))
+        test(s, 100)
+        error = begin
+          test(s, :e)
+        rescue TypeError => e
+          e.class
+        end
+        [s, error]
+    "#), @r#"["abcd", TypeError]"#);
+}
+
+#[test]
 fn test_new_hash_nonempty() {
     eval(r#"
         def test

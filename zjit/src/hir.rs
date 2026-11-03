@@ -4754,10 +4754,15 @@ impl Function {
         if self.type_of(val).is_subtype(ty) {
             return true;
         }
-        let Some(profiled_type) = self.profiled_type_of_at(val, state) else {
-            return false;
-        };
-        Type::from_profiled_type(profiled_type).is_subtype(ty)
+        if let Some(profiled_type) = self.profiled_type_of_at(val, state) {
+            return Type::from_profiled_type(profiled_type).is_subtype(ty);
+        }
+        // A polymorphic profile is still likely a `ty` when every profiled type is one,
+        // e.g. a String and a String subclass such as ActiveSupport::SafeBuffer.
+        let Some(profiles) = self.profiles.as_ref() else { return false; };
+        let Some(summary) = self.polymorphic_summary(profiles, val, state) else { return false; };
+        summary.buckets().iter().take_while(|t| !t.is_empty())
+            .all(|&t| Type::from_profiled_type(t).is_subtype(ty))
     }
 
     /// Guard that `val` is a `guard_type`, unless it is already known to be one.
