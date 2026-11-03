@@ -45,6 +45,7 @@
 #include "builtin.h"
 #include "shape.h"
 #include "yjit.h"
+#include "vm_core.h"
 
 /* Flags of RObject
  *
@@ -554,10 +555,42 @@ rb_obj_clone(VALUE obj)
     return mutable_obj_clone(obj, Qnil);
 }
 
+/*
+ * Whether +cme+ is the boot-time C definition of a copy hook owned by +owner+.
+ * A redefinition, a prepended or included override, or a refinement resolves
+ * to another method entry, which is not basic or has another owner.
+ */
+static inline bool
+dup_builtin_hook_p(const rb_callable_method_entry_t *cme, VALUE owner)
+{
+    return cme && cme->owner == owner && METHOD_ENTRY_BASIC(cme) &&
+        cme->def->type == VM_METHOD_TYPE_CFUNC && cme->def->body.cfunc.argc == 1;
+}
+
 VALUE
 rb_obj_dup_setup(VALUE obj, VALUE dup)
 {
     init_copy(dup, obj);
+
+    /*
+     * The default initialize_dup only calls initialize_copy. When both hooks
+     * are the builtin definitions and initialize_copy is Kernel's, Hash's or
+     * Array's, call initialize_copy's C function directly: none of them calls
+     * Ruby code or raises for an unfrozen copy of the same class, so only the
+     * two method frames are skipped. With C call/return hooks enabled, call
+     * the hooks as methods so that TracePoint sees them.
+     */
+    if (LIKELY(ruby_vm_c_events_enabled == 0)) {
+        VALUE klass = RBASIC_CLASS(dup);
+        const rb_callable_method_entry_t *copy;
+        if (dup_builtin_hook_p(rb_callable_method_entry(klass, id_init_dup), rb_mKernel) &&
+            (copy = rb_callable_method_entry(klass, id_init_copy)) &&
+            (dup_builtin_hook_p(copy, rb_mKernel) || dup_builtin_hook_p(copy, rb_cHash) ||
+             dup_builtin_hook_p(copy, rb_cArray))) {
+            ((VALUE (*)(VALUE, VALUE))copy->def->body.cfunc.func)(dup, obj);
+            return dup;
+        }
+    }
     rb_funcall(dup, id_init_dup, 1, obj);
 
     return dup;
