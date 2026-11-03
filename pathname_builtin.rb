@@ -444,6 +444,12 @@ class Pathname
     "#<#{self.class}:#{@path}>"
   end
 
+  # Regexp that matches a separator. No longer used here, but kept public as
+  # in Ruby 4.0: Bundler before 4.0.12 uses it in Source::Path#generate_bin.
+  separator_list = Regexp.quote "#{File::ALT_SEPARATOR}#{File::SEPARATOR}"
+  SEPARATOR_PAT = (File::ALT_SEPARATOR ? /[#{separator_list}]/ : /#{separator_list}/).freeze
+  deprecate_constant :SEPARATOR_PAT
+
   # :markup: markdown
   #
   # call-seq:

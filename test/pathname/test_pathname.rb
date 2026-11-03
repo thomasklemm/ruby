@@ -1595,4 +1595,14 @@ class TestPathname < Test::Unit::TestCase
       Pathname.new("../bar"),
       Pathname.new("/foo/bar").relative_path_from(obj))
   end
+
+  def test_separator_pat_deprecated
+    # The value Pathname::SEPARATOR_PAT had in Ruby 4.0.
+    expected = Regexp.new(DOSISH ? "[\\\\/]" : "/")
+    pat = EnvUtil.suppress_warning { Pathname::SEPARATOR_PAT }
+    assert_equal(expected, pat)
+    assert_predicate(pat, :frozen?)
+    assert_match(/\A#{pat}/, "/usr")
+    assert_deprecated_warning(/Pathname::SEPARATOR_PAT is deprecated/) { Pathname::SEPARATOR_PAT }
+  end
 end
