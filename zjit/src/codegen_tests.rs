@@ -3037,7 +3037,7 @@ fn test_invokesuper_forwards_block_implicitly() {
 
 #[test]
 fn test_invokesuper_forwards_block_implicitly_with_args() {
-    assert_snapshot!(inspect(r#"
+    eval(r#"
         class A
           def foo(x)
             [x, (block_given? ? yield : "no_block")]
@@ -3055,8 +3055,29 @@ fn test_invokesuper_forwards_block_implicitly_with_args() {
         end
 
         test  # profile
-        test  # compile + run compiled code
-    "#), @r#"["B", ["arg_value", "forwarded"]]"#);
+    "#);
+    assert_snapshot!(assert_compiles("test"), @r#"["B", ["arg_value", "forwarded"]]"#);
+}
+
+#[test]
+fn test_invokesuper_recompiles_when_block_appears() {
+    set_call_threshold(2);
+    eval(r#"
+        class A
+          def foo(x) = block_given? ? yield(x) : x
+        end
+
+        class B < A
+          def foo(x) = super(x)
+        end
+
+        B.new.foo(1); B.new.foo(1)
+    "#);
+    let num_profiles = get_option!(num_profiles);
+    for _ in 0..num_profiles + 2 {
+        eval("B.new.foo(1) { _1 + 1 }");
+    }
+    assert_snapshot!(assert_compiles("[B.new.foo(1), B.new.foo(1) { _1 + 1 }]"), @"[1, 2]");
 }
 
 #[test]

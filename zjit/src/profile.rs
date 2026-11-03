@@ -3,7 +3,7 @@
 // We use the YARV bytecode constants which have a CRuby-style name
 #![allow(non_upper_case_globals)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::{cruby::*, payload::get_or_create_iseq_payload, options::{get_option, NumProfiles}};
 use crate::distribution::{Distribution, DistributionSummary};
 use crate::stats::Counter::profile_time_ns;
@@ -244,6 +244,9 @@ fn profile_invokesuper(profiler: &mut Profiler, profile: &mut IseqProfile) {
 
     profile.super_cme.entry(profiler.insn_idx)
         .or_insert_with(|| TypeDistribution::new()).observe(ProfiledType::object(cme_value));
+    if !profiler.peek_at_block_handler().nil_p() {
+        profile.super_with_block.insert(profiler.insn_idx);
+    }
 
     unsafe { rb_gc_writebarrier(profiler.iseq.into(), cme_value) };
 
@@ -449,6 +452,9 @@ pub struct IseqProfile {
     /// Method entries for `super` calls (stored as VALUE to be GC-safe)
     super_cme: HashMap<YarvInsnIdx, TypeDistribution>,
 
+    /// `super` calls that ran in a frame with a block, which they pass on
+    super_with_block: HashSet<YarvInsnIdx>,
+
     /// Observed lengths of caller splat arrays for call instructions.
     splat_lengths: HashMap<YarvInsnIdx, SplatLengthDistribution>,
 }
@@ -458,6 +464,7 @@ impl IseqProfile {
         Self {
             entries: Vec::new(),
             super_cme: HashMap::new(),
+            super_with_block: HashSet::new(),
             splat_lengths: HashMap::new(),
         }
     }
@@ -504,6 +511,10 @@ impl IseqProfile {
         } else {
             None
         }
+    }
+
+    pub fn super_saw_block(&self, insn_idx: YarvInsnIdx) -> bool {
+        self.super_with_block.contains(&insn_idx)
     }
 
     /// Run a given callback with every object in IseqProfile
