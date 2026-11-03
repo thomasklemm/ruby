@@ -896,6 +896,9 @@ pub enum BlockHandler {
     /// guarded Proc value, which becomes the callee frame's block handler
     /// (a Proc VALUE is itself a valid block handler).
     BlockArgProc(InsnId),
+    /// The calling method frame's own block handler, of any kind or none, which `super`
+    /// passes on.
+    FrameBlock(InsnId),
 }
 
 /// Identifier used by LoadField/StoreField/LoadArg for HIR dumps. Variants
@@ -1641,7 +1644,7 @@ macro_rules! for_each_operand_impl {
             }
             Insn::PushInlineFrame { recv, state, exit_state, block, .. } => {
                 $visit_one!(*recv);
-                if let Some(BlockHandler::BlockArgProc(id)) = &$($mut)? *block {
+                if let Some(BlockHandler::BlockArgProc(id) | BlockHandler::FrameBlock(id)) = &$($mut)? *block {
                     $visit_one!(*id);
                 }
                 $visit_one!(*state);
@@ -1653,7 +1656,7 @@ macro_rules! for_each_operand_impl {
             Insn::SendDirect(insn) => {
                 $visit_one!(insn.recv);
                 $visit_many!(insn.args);
-                if let Some(BlockHandler::BlockArgProc(id)) = &$($mut)? insn.block {
+                if let Some(BlockHandler::BlockArgProc(id) | BlockHandler::FrameBlock(id)) = &$($mut)? insn.block {
                     $visit_one!(*id);
                 }
                 $visit_one!(insn.state);
@@ -2072,6 +2075,7 @@ impl<'a> InsnPrinter<'a> {
     fn block_handler(&self, block: &BlockHandler) -> String {
         match block {
             BlockHandler::BlockArgProc(proc_id) => format!("&{proc_id}"),
+            BlockHandler::FrameBlock(bh) => format!("frame block {bh}"),
             BlockHandler::BlockIseq(blockiseq) => format!("{:p}", self.ptr_map.map_ptr(*blockiseq)),
             BlockHandler::BlockArg => "&block".to_string(),
         }
@@ -2333,7 +2337,7 @@ impl<'a> std::fmt::Display for InsnPrinter<'a> {
                         write!(f, "Send {recv}, {:p}, :{}", self.ptr_map.map_ptr(blockiseq), ruby_call_method_name(*cd))?,
                     Some(BlockHandler::BlockArg) =>
                         write!(f, "Send {recv}, &block, :{}", ruby_call_method_name(*cd))?,
-                    Some(BlockHandler::BlockArgProc(_)) =>
+                    Some(BlockHandler::BlockArgProc(_) | BlockHandler::FrameBlock(_)) =>
                         unreachable!("BlockArgProc is not sent through Send"),
                     None =>
                         write!(f, "Send {recv}, :{}", ruby_call_method_name(*cd))?,
@@ -5392,7 +5396,7 @@ impl Function {
 
                                 let blockiseq = match send_block {
                                     Some(BlockHandler::BlockArg) => unreachable!("unsupported &block should have been filtered out"),
-                                    Some(BlockHandler::BlockArgProc(_)) => unreachable!("BlockArgProc is only built for ISEQ callees"),
+                                    Some(BlockHandler::BlockArgProc(_) | BlockHandler::FrameBlock(_)) => unreachable!("BlockArgProc is only built for ISEQ callees"),
                                     Some(BlockHandler::BlockIseq(blockiseq)) => Some(blockiseq),
                                     None => None,
                                 };
@@ -5624,7 +5628,8 @@ impl Function {
                             mid: ID,
                             state: InsnId,
                             local_iseq: IseqPtr,
-                        ) {
+                            pass_block: bool,
+                        ) -> InsnId {
                             fun.push_insn(block, Insn::PatchPoint {
                                 invariant: Invariant::MethodRedefined {
                                     klass: unsafe { (*super_cme).defined_class },
@@ -5646,6 +5651,9 @@ impl Function {
                             fun.push_insn(block, Insn::GuardBitEquals { val: method_entry, expected: Const::Value(current_cme.into()), reason: Box::new(SideExitReason::GuardSuperMethodEntry), state, recompile: None });
 
                             let block_handler = fun.load_field(block, lep, FieldName::VM_ENV_DATA_INDEX_SPECVAL, SIZEOF_VALUE_I32 * VM_ENV_DATA_INDEX_SPECVAL, types::RubyValue);
+                            if pass_block {
+                                return block_handler;
+                            }
                             fun.push_insn(block, Insn::GuardBitEquals {
                                 val: block_handler,
                                 expected: Const::Value(VALUE(VM_BLOCK_HANDLER_NONE as usize)),
@@ -5653,6 +5661,7 @@ impl Function {
                                 state,
                                 recompile: Some(Recompile),
                             });
+                            block_handler
                         }
 
                         // Don't handle calls with literal blocks (e.g., super { ... })
@@ -5707,11 +5716,7 @@ impl Function {
                             continue;
                         };
 
-                        if local_payload.profile.super_saw_block(frame_state_insn_idx) {
-                            self.push_insn_id(block, insn_id);
-                            self.set_dynamic_send_reason(insn_id, SuperCallWithBlock);
-                            continue;
-                        }
+                        let pass_block = local_payload.profile.super_saw_block(frame_state_insn_idx);
 
                         // Get defined_class and method ID from the profiled CME.
                         let current_defined_class = unsafe { (*current_cme).defined_class };
@@ -5757,7 +5762,7 @@ impl Function {
                                 self.push_insn_id(block, insn_id); continue;
                             };
 
-                            emit_super_call_guards(self, block, lookup_cme, current_cme, mid, state, frame_state_iseq);
+                            let block_handler = emit_super_call_guards(self, block, lookup_cme, current_cme, mid, state, frame_state_iseq, pass_block);
 
                             let SendDirectArgs { state: send_state, args: send_args, kw_bits, jit_entry_idx } =
                                 self.emit_send_direct_args(block, call, &args, state, state);
@@ -5772,10 +5777,14 @@ impl Function {
                                 jit_entry_idx,
                                 state: send_state,
                                 exit_state: state,
-                                block: None,
+                                block: pass_block.then_some(BlockHandler::FrameBlock(block_handler)),
                             })));
                             self.make_equal_to(insn_id, replacement);
 
+                        } else if pass_block {
+                            self.push_insn_id(block, insn_id);
+                            self.set_dynamic_send_reason(insn_id, SuperCallWithBlock);
+                            continue;
                         } else if def_type == VM_METHOD_TYPE_CFUNC {
                             let cfunc = unsafe { get_cme_def_body_cfunc(super_cme) };
                             let cfunc_argc = unsafe { get_mct_argc(cfunc) };
@@ -5796,7 +5805,7 @@ impl Function {
                                         self.set_dynamic_send_reason(insn_id, ArgcParamMismatch);
                                         continue;
                                     }
-                                    emit_super_call_guards(self, block, lookup_cme, current_cme, mid, state, frame_state_iseq);
+                                    emit_super_call_guards(self, block, lookup_cme, current_cme, mid, state, frame_state_iseq, false);
 
                                     // Try inlining the cfunc into HIR
                                     let tmp_block = self.new_block(u32::MAX);
@@ -5846,7 +5855,7 @@ impl Function {
 
                                 // Variadic C function: func(int argc, VALUE *argv, VALUE recv)
                                 -1 => {
-                                    emit_super_call_guards(self, block, lookup_cme, current_cme, mid, state, frame_state_iseq);
+                                    emit_super_call_guards(self, block, lookup_cme, current_cme, mid, state, frame_state_iseq, false);
 
                                     // Try inlining the cfunc into HIR
                                     let tmp_block = self.new_block(u32::MAX);
@@ -6052,6 +6061,10 @@ impl Function {
                 // in HIR construction for the defined opcode to check the send flags of the method
                 // being inlined, too.
                 assert!(!matches!(call_block, Some(BlockHandler::BlockArg)), "BlockArg in SendDirect");
+                if matches!(call_block, Some(BlockHandler::FrameBlock(_))) {
+                    search_start = send_pos + 1;
+                    continue;
+                }
 
                 // Apply the cheap optimization heuristics (size, budget, denylist)
                 // before can_inline's more expensive elibility checks. This allows
