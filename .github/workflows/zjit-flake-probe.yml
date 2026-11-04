@@ -12,6 +12,7 @@ env:
   CARGO_HTTP_MULTIPLEXING: false
   RUST_BACKTRACE: 1
   ZJIT_RB_BUG: 1
+  INSTA_WORKSPACE_ROOT: ${{ github.workspace }}/src/zjit
 
 jobs:
   probe:
