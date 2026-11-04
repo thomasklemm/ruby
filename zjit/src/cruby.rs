@@ -1329,6 +1329,61 @@ pub mod test_utils {
 
     /// Make sure the Ruby VM is booted and ZJITState is initialized. Test helpers that
     /// touch ZJITState or ZJIT stats before running any Ruby code must call this first.
+    #[cfg(target_os = "macos")]
+    pub mod probe_chld {
+        use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+        pub static PID: AtomicI32 = AtomicI32::new(0);
+        pub static CODE: AtomicI32 = AtomicI32::new(0);
+        pub static STATUS: AtomicI32 = AtomicI32::new(0);
+        pub static UID: AtomicI32 = AtomicI32::new(0);
+        static OLD: AtomicUsize = AtomicUsize::new(0);
+        static OLD_FLAGS: AtomicI32 = AtomicI32::new(0);
+        extern "C" fn handler(sig: libc::c_int, info: *mut libc::siginfo_t, ctx: *mut libc::c_void) {
+            unsafe {
+                PID.store((*info).si_pid(), Ordering::SeqCst);
+                CODE.store((*info).si_code, Ordering::SeqCst);
+                STATUS.store((*info).si_status(), Ordering::SeqCst);
+                UID.store((*info).si_uid() as i32, Ordering::SeqCst);
+                let old = OLD.load(Ordering::SeqCst);
+                if old > 1 {
+                    if OLD_FLAGS.load(Ordering::SeqCst) & libc::SA_SIGINFO != 0 {
+                        let f: extern "C" fn(libc::c_int, *mut libc::siginfo_t, *mut libc::c_void) = std::mem::transmute(old);
+                        f(sig, info, ctx);
+                    } else {
+                        let f: extern "C" fn(libc::c_int) = std::mem::transmute(old);
+                        f(sig);
+                    }
+                }
+            }
+        }
+        pub fn install() {
+            PID.store(0, Ordering::SeqCst);
+            CODE.store(0, Ordering::SeqCst);
+            if OLD.load(Ordering::SeqCst) != 0 { return; }
+            unsafe {
+                let mut new: libc::sigaction = std::mem::zeroed();
+                let mut old: libc::sigaction = std::mem::zeroed();
+                new.sa_sigaction = handler as *const () as usize;
+                new.sa_flags = libc::SA_SIGINFO;
+                libc::sigemptyset(&mut new.sa_mask);
+                libc::sigaction(libc::SIGCHLD, &new, &mut old);
+                OLD.store(old.sa_sigaction, Ordering::SeqCst);
+                OLD_FLAGS.store(old.sa_flags, Ordering::SeqCst);
+                PID.store(0, Ordering::SeqCst);
+                CODE.store(0, Ordering::SeqCst);
+            }
+        }
+        pub fn report() {
+            let pid = PID.load(Ordering::SeqCst);
+            let mut path = [0u8; 4096];
+            let mut name = [0u8; 256];
+            let (pn, n) = unsafe { (libc::proc_pidpath(pid, path.as_mut_ptr().cast(), 4096), libc::proc_name(pid, name.as_mut_ptr().cast(), 256)) };
+            eprintln!("PROBE sigchld si_pid={} si_code={} si_status={} si_uid={} sender_path={:?} sender_name={:?} old_handler=0x{:x}",
+                pid, CODE.load(Ordering::SeqCst), STATUS.load(Ordering::SeqCst), UID.load(Ordering::SeqCst),
+                String::from_utf8_lossy(&path[..pn.max(0) as usize]), String::from_utf8_lossy(&name[..n.max(0) as usize]), OLD.load(Ordering::SeqCst));
+        }
+    }
+
     pub fn ensure_rubyvm() {
         RUBY_VM_INIT.call_once(boot_rubyvm);
     }
@@ -1404,6 +1459,8 @@ pub mod test_utils {
     pub fn assert_compiles_allowing_exits(program: &str) -> String {
         use crate::state::ZJITState;
         ensure_rubyvm(); // ZJITState is not available until the VM is booted
+        #[cfg(target_os = "macos")]
+        probe_chld::install();
         ZJITState::enable_assert_compiles();
         let result = inspect(program);
         ZJITState::disable_assert_compiles();
@@ -1446,6 +1503,7 @@ pub mod test_utils {
                     String::from_utf8_lossy(&name[..n.max(0) as usize]), String::from_utf8_lossy(&path[..pn.max(0) as usize]), libc::getpid(), libc::getppid());
                 let mut kids = [0i32; 64];
                 let k = libc::proc_listchildpids(libc::getpid(), kids.as_mut_ptr().cast(), 256);
+                probe_chld::report();
                 eprintln!("PROBE children_now={:?}", &kids[..(k.max(0) as usize).min(64)]);
             }
         }
