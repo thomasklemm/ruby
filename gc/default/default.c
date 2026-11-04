@@ -4344,6 +4344,7 @@ gc_finalize_deferred_register(rb_objspace_t *objspace)
     /* Enqueue gc_finalize_deferred on this objspace's owning Ractor.  A global GC can
      * defer a foreign objspace's finalizers, and those must run on their owner rather
      * than on the driver. */
+    rb_probe_gc_bits |= 2;
     rb_gc_trigger_finalize_deferred(objspace, objspace->finalize_deferred_pjob);
 }
 
@@ -5047,9 +5048,11 @@ gc_tdata_deferred_free_pjob_ensure(void)
 /* A terminating Ractor's postmortem collection runs on an EC whose stack is already
  * torn down: it never checks interrupts again, so a job triggered there is lost and no
  * later sweep can rediscover the entries.  Hand those to the main Ractor. */
+extern volatile unsigned int rb_probe_gc_bits;
 static void
 gc_tdata_deferred_free_trigger(rb_objspace_t *objspace)
 {
+    rb_probe_gc_bits |= 1;
     if (objspace->flags.during_postmortem) {
         rb_gc_trigger_postponed_job_on_main(global_objspace->tdata_deferred_free_pjob);
     }

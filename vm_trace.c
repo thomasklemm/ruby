@@ -1901,6 +1901,7 @@ rb_postponed_job_trigger(rb_postponed_job_handle_t h)
     rb_postponed_job_queues_t *pjq = &postponed_job_queue;
 
     RUBY_ATOMIC_OR(pjq->triggered_bitset, (((rb_atomic_t)1UL) << h));
+    rb_probe_pjob_bits |= (1u << h);
     RUBY_VM_SET_POSTPONED_JOB_INTERRUPT(get_valid_ec(GET_VM()));
 }
 

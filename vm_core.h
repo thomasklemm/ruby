@@ -2319,12 +2319,13 @@ enum {
     VM_BARRIER_INTERRUPT_MASK    = 0x20,
 };
 
-#define RUBY_VM_SET_TIMER_INTERRUPT(ec)		ATOMIC_OR((ec)->interrupt_flag, TIMER_INTERRUPT_MASK)
-#define RUBY_VM_SET_INTERRUPT(ec)		ATOMIC_OR((ec)->interrupt_flag, PENDING_INTERRUPT_MASK)
-#define RUBY_VM_SET_POSTPONED_JOB_INTERRUPT(ec)	ATOMIC_OR((ec)->interrupt_flag, POSTPONED_JOB_INTERRUPT_MASK)
-#define RUBY_VM_SET_TRAP_INTERRUPT(ec)		ATOMIC_OR((ec)->interrupt_flag, TRAP_INTERRUPT_MASK)
-#define RUBY_VM_SET_TERMINATE_INTERRUPT(ec)     ATOMIC_OR((ec)->interrupt_flag, TERMINATE_INTERRUPT_MASK)
-#define RUBY_VM_SET_VM_BARRIER_INTERRUPT(ec)    ATOMIC_OR((ec)->interrupt_flag, VM_BARRIER_INTERRUPT_MASK)
+RUBY_EXTERN volatile unsigned int rb_probe_irq_bits, rb_probe_pjob_bits, rb_probe_gc_bits;
+#define RUBY_VM_SET_TIMER_INTERRUPT(ec) do { rb_probe_irq_bits |= TIMER_INTERRUPT_MASK; ATOMIC_OR((ec)->interrupt_flag, TIMER_INTERRUPT_MASK); } while (0)
+#define RUBY_VM_SET_INTERRUPT(ec) do { rb_probe_irq_bits |= PENDING_INTERRUPT_MASK; ATOMIC_OR((ec)->interrupt_flag, PENDING_INTERRUPT_MASK); } while (0)
+#define RUBY_VM_SET_POSTPONED_JOB_INTERRUPT(ec) do { rb_probe_irq_bits |= POSTPONED_JOB_INTERRUPT_MASK; ATOMIC_OR((ec)->interrupt_flag, POSTPONED_JOB_INTERRUPT_MASK); } while (0)
+#define RUBY_VM_SET_TRAP_INTERRUPT(ec) do { rb_probe_irq_bits |= TRAP_INTERRUPT_MASK; ATOMIC_OR((ec)->interrupt_flag, TRAP_INTERRUPT_MASK); } while (0)
+#define RUBY_VM_SET_TERMINATE_INTERRUPT(ec) do { rb_probe_irq_bits |= TERMINATE_INTERRUPT_MASK; ATOMIC_OR((ec)->interrupt_flag, TERMINATE_INTERRUPT_MASK); } while (0)
+#define RUBY_VM_SET_VM_BARRIER_INTERRUPT(ec) do { rb_probe_irq_bits |= VM_BARRIER_INTERRUPT_MASK; ATOMIC_OR((ec)->interrupt_flag, VM_BARRIER_INTERRUPT_MASK); } while (0)
 
 static inline bool
 RUBY_VM_INTERRUPTED(rb_execution_context_t *ec)

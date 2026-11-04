@@ -5545,3 +5545,5 @@ vm_collect_usage_register(int reg, int isset)
 #endif
 
 #include "vm_call_iseq_optimized.inc" /* required from vm_insnhelper.c */
+
+volatile unsigned int rb_probe_irq_bits, rb_probe_pjob_bits, rb_probe_gc_bits;
