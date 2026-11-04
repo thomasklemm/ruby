@@ -1433,6 +1433,21 @@ pub mod test_utils {
             }
             eprintln!("PROBE program took {:?}", t0.elapsed());
             unsafe { eprintln!("PROBE irq_bits=0x{:x} pjob_bits=0x{:x} gc_bits=0x{:x} gc_runs={} sig_mask=0x{:x}", rb_probe_irq_bits, rb_probe_pjob_bits, rb_probe_gc_bits, rb_gc_count() - gc_before, rb_probe_sig_mask); }
+            #[cfg(target_os = "macos")]
+            unsafe {
+                let mut info: libc::siginfo_t = std::mem::zeroed();
+                let r = libc::waitid(libc::P_ALL, 0, &mut info, libc::WEXITED | libc::WNOHANG | libc::WNOWAIT);
+                let pid = info.si_pid();
+                let mut name = [0u8; 256];
+                let n = libc::proc_name(pid, name.as_mut_ptr().cast(), 256);
+                let mut path = [0u8; 4096];
+                let pn = libc::proc_pidpath(pid, path.as_mut_ptr().cast(), 4096);
+                eprintln!("PROBE waitid r={} child_pid={} status={} name={:?} path={:?} self={} ppid={}", r, pid, info.si_status(),
+                    String::from_utf8_lossy(&name[..n.max(0) as usize]), String::from_utf8_lossy(&path[..pn.max(0) as usize]), libc::getpid(), libc::getppid());
+                let mut kids = [0i32; 64];
+                let k = libc::proc_listchildpids(libc::getpid(), kids.as_mut_ptr().cast(), 256);
+                eprintln!("PROBE children_now={:?}", &kids[..(k.max(0) as usize).min(64)]);
+            }
         }
         assert_eq!(exits_before, crate::stats::total_exit_count(), "Program side-exited");
         result
