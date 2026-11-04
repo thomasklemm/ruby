@@ -2251,10 +2251,10 @@ fn test_send_proc_block_arg_to_block_param_callee() {
         [value[0].equal?(blk), value[1], value[2], reassigned]
     ";
     set_inline_threshold(0);
-    assert_snapshot!(assert_compiles(program), @"[true, true, 24, [nil, true, 4]]");
-    with_inlining(|| {
-        assert_snapshot!(assert_inlines(program), @"[true, true, 24, [nil, true, 4]]");
-    });
+    let sent_direct = assert_compiles(program);
+    let inlined = with_inlining(|| assert_inlines(program));
+    assert_snapshot!(sent_direct, @"[true, true, 24, [nil, true, 4]]");
+    assert_snapshot!(inlined, @"[true, true, 24, [nil, true, 4]]");
 }
 
 #[test]
