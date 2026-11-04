@@ -4531,12 +4531,17 @@ m_core_hash_merge_kwd(VALUE recv, VALUE hash, VALUE kw)
 }
 
 static VALUE
-m_core_hash_merge_fit_kwd(VALUE recv, VALUE hash, VALUE kw)
+m_core_hash_new_kwd(int argc, VALUE *argv, VALUE recv)
 {
-    // `hash` is a fresh `newhash`: merge in place if the result fits it.
-    if (!NIL_P(kw)) {
-        REWIND_CFP(hash = rb_hash_merge2_fit(hash, rb_to_hash_type(kw)));
-    }
+    // `k1, v1, ..., kw` for `k1: v1, ..., **kw`: build one hash sized for both.
+    VALUE kw = argv[argc - 1], hash;
+    VM_ASSERT(argc % 2 == 1);
+    REWIND_CFP({
+        if (!NIL_P(kw)) kw = rb_to_hash_type(kw);
+        hash = rb_hash_new_capa((argc - 1) / 2 + (NIL_P(kw) ? 0 : RHASH_SIZE(kw)));
+        rb_hash_bulk_insert(argc - 1, argv, hash);
+        if (!NIL_P(kw)) rb_hash_merge2(hash, kw, false);
+    });
     return hash;
 }
 
@@ -4770,7 +4775,7 @@ Init_VM(void)
     rb_define_method_id(klass, id_core_hash_merge_bang_ptr, m_core_hash_merge_bang_ptr, -1);
     rb_define_method_id(klass, id_core_hash_merge_kwd, m_core_hash_merge_kwd, 2);
     rb_define_method_id(klass, id_core_hash_merge_bang_kwd, m_core_hash_merge_bang_kwd, 2);
-    rb_define_method_id(klass, id_core_hash_merge_fit_kwd, m_core_hash_merge_fit_kwd, 2);
+    rb_define_method_id(klass, id_core_hash_new_kwd, m_core_hash_new_kwd, -1);
     rb_define_method_id(klass, id_core_hash_coerce, m_core_hash_coerce, 1);
     rb_define_method_id(klass, id_core_raise, f_raise, -1);
     rb_define_method_id(klass, id_core_sprintf, f_sprintf, -1);

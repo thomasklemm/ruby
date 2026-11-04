@@ -1479,7 +1479,6 @@ pm_compile_hash_elements(rb_iseq_t *iseq, const pm_node_t *node, const pm_node_l
     int stack_length = 0;
     bool first_chunk = true;
     bool owned_hash = false;
-    bool fresh_hash = false;
 
     // This is an optimization wherein we keep track of whether or not the
     // previous element was a static literal. If it was, then we do not attempt
@@ -1496,7 +1495,6 @@ pm_compile_hash_elements(rb_iseq_t *iseq, const pm_node_t *node, const pm_node_l
             PUSH_SEQ(ret, anchor);                                                                \
             PUSH_INSN1(ret, location, newhash, INT2FIX(stack_length));                            \
             first_chunk = false;                                                                  \
-            fresh_hash = true;                                                                    \
         }                                                                                         \
         else {                                                                                    \
             PUSH_INSN1(ret, location, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));       \
@@ -1601,6 +1599,21 @@ pm_compile_hash_elements(rb_iseq_t *iseq, const pm_node_t *node, const pm_node_l
             break;
           }
           case PM_ASSOC_SPLAT_NODE: {
+            if (first_chunk && stack_length && shareability == 0) {
+                // `k: v, **kw`: build one hash sized for the pairs and `kw`.
+                // (Shareable constant values push the pairs to `ret` directly.)
+                PUSH_INSN1(ret, location, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));
+                PUSH_SEQ(ret, anchor);
+                PM_COMPILE_NOT_POPPED(element);
+                PUSH_SEND(ret, location, id_core_hash_new_kwd, INT2FIX(stack_length + 1));
+                INIT_ANCHOR(anchor);
+                stack_length = 0;
+                first_chunk = false;
+                owned_hash = true;
+                static_literal = false;
+                break;
+            }
+
             FLUSH_CHUNK;
 
             const pm_assoc_splat_node_t *assoc_splat = (const pm_assoc_splat_node_t *) element;
@@ -1664,7 +1677,7 @@ pm_compile_hash_elements(rb_iseq_t *iseq, const pm_node_t *node, const pm_node_l
                         PUSH_SEND(ret, location, id_core_hash_merge_bang_kwd, INT2FIX(2));
                     }
                     else {
-                        PUSH_SEND(ret, location, fresh_hash ? id_core_hash_merge_fit_kwd : id_core_hash_merge_kwd, INT2FIX(2));
+                        PUSH_SEND(ret, location, id_core_hash_merge_kwd, INT2FIX(2));
                         owned_hash = true;
                     }
                 }
@@ -1733,9 +1746,8 @@ pm_setup_args_core(const pm_arguments_node_t *arguments_node, const pm_node_t *b
                     else if (*dup_rest & DUP_SINGLE_KW_SPLAT) {
                         *flags |= VM_CALL_KW_SPLAT_MUT;
                         PUSH_INSN1(ret, location, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));
-                        PUSH_INSN1(ret, location, newhash, INT2FIX(0));
                         pm_compile_hash_elements(iseq, argument, elements, 0, Qundef, true, ret, scope_node);
-                        PUSH_SEND(ret, location, id_core_hash_merge_fit_kwd, INT2FIX(2));
+                        PUSH_SEND(ret, location, id_core_hash_new_kwd, INT2FIX(1));
                     }
                     else {
                         pm_compile_hash_elements(iseq, argument, elements, 0, Qundef, true, ret, scope_node);

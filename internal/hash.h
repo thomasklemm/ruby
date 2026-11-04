@@ -116,7 +116,6 @@ RUBY_SYMBOL_EXPORT_END
 
 VALUE rb_hash_new_with_bulk_insert(rb_len_t argc, const VALUE *argv);
 VALUE rb_hash_merge2(VALUE h1, VALUE h2, bool dup);
-VALUE rb_hash_merge2_fit(VALUE h1, VALUE h2);
 VALUE rb_hash_merge2_bulk(VALUE hash, rb_len_t argc, const VALUE *argv, bool dup);
 VALUE rb_hash_resurrect(VALUE hash);
 int rb_hash_stlike_lookup(VALUE hash, st_data_t key, st_data_t *pval);
