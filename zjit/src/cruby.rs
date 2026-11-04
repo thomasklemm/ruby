@@ -1419,8 +1419,8 @@ pub mod test_utils {
         let exits_before = crate::stats::total_exit_count();
         let per_reason_before: Vec<u64> = crate::stats::EXIT_COUNTERS.iter().map(|c| unsafe { *crate::stats::counter_ptr(*c) }).collect();
         let t0 = std::time::Instant::now();
-        unsafe extern "C" { static mut rb_probe_irq_bits: u32; static mut rb_probe_pjob_bits: u32; static mut rb_probe_gc_bits: u32; fn rb_gc_count() -> usize; }
-        let gc_before = unsafe { rb_probe_irq_bits = 0; rb_probe_pjob_bits = 0; rb_probe_gc_bits = 0; rb_gc_count() };
+        unsafe extern "C" { static mut rb_probe_irq_bits: u32; static mut rb_probe_pjob_bits: u32; static mut rb_probe_gc_bits: u32; static mut rb_probe_sig_mask: u64; fn rb_gc_count() -> usize; }
+        let gc_before = unsafe { rb_probe_irq_bits = 0; rb_probe_pjob_bits = 0; rb_probe_gc_bits = 0; rb_probe_sig_mask = 0; rb_gc_count() };
         ZJITState::enable_assert_compiles();
         let result = inspect(program);
         ZJITState::disable_assert_compiles();
@@ -1432,7 +1432,7 @@ pub mod test_utils {
                 }
             }
             eprintln!("PROBE program took {:?}", t0.elapsed());
-            unsafe { eprintln!("PROBE irq_bits=0x{:x} pjob_bits=0x{:x} gc_bits=0x{:x} gc_runs={}", rb_probe_irq_bits, rb_probe_pjob_bits, rb_probe_gc_bits, rb_gc_count() - gc_before); }
+            unsafe { eprintln!("PROBE irq_bits=0x{:x} pjob_bits=0x{:x} gc_bits=0x{:x} gc_runs={} sig_mask=0x{:x}", rb_probe_irq_bits, rb_probe_pjob_bits, rb_probe_gc_bits, rb_gc_count() - gc_before, rb_probe_sig_mask); }
         }
         assert_eq!(exits_before, crate::stats::total_exit_count(), "Program side-exited");
         result

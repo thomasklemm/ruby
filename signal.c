@@ -700,10 +700,12 @@ signal_enque(int sig)
     ATOMIC_INC(signal_buff.size);
 }
 
+volatile unsigned long long rb_probe_sig_mask;
 static void
 sighandler(int sig)
 {
     int old_errnum = errno;
+    if (sig < 64) rb_probe_sig_mask |= (1ULL << sig);
 
     signal_enque(sig);
     rb_thread_wakeup_timer_thread(sig);
