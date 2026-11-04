@@ -189,6 +189,49 @@ class TestKeywordArguments < Test::Unit::TestCase
     assert_equal({b: 2, c: 3}, kw)
   end
 
+  def test_keyword_splat_after_dynamic_keywords
+    def self.kw(**kw) = kw
+    key = Struct.new(:id) do
+      def hash = id.hash
+      def eql?(other) = id == other.id
+    end
+    v = 1
+    small = {b: 2}
+    large = (1..9).to_h { [:"k#{_1}", _1] }
+
+    [small, large].each do |h|
+      assert_equal({a: 1, **h}, kw(a: v, **h))
+      assert_equal([:a, *h.keys, :c], kw(a: v, **h, c: v, **{}).keys)
+      assert_equal({a: 1, **h}, {a: v, **h})
+
+      src = h.dup
+      r = kw(a: v, **src)
+      src[:z] = 0
+      r[:y] = 0
+      assert_not_include(r, :z)
+      assert_not_include(src, :y)
+
+      d = Hash.new(0).compare_by_identity.merge!(h)
+      [kw(a: v, **d), {a: v, **d}].each do |x|
+        assert_nil(x.default)
+        assert_not_predicate(x, :compare_by_identity?)
+      end
+    end
+
+    r = kw(key.new(1) => v, **{key.new(1) => 2, key.new(2) => 3})
+    assert_equal({key.new(1) => 2, key.new(2) => 3}, r)
+    assert_equal(3, r[key.new(2)])
+    assert_equal({a: 1, b: 2, c: 1, d: 3}, kw(a: v, **small, c: v, **{d: 3}))
+
+    raising = Object.new
+    def raising.to_hash = raise("to_hash")
+    assert_raise_with_message(RuntimeError, "to_hash") { kw(a: v, **raising) }
+    not_hash = Object.new
+    def not_hash.to_hash = 1
+    assert_raise(TypeError) { kw(a: v, **not_hash) }
+    assert_raise(TypeError) { {a: v, **not_hash} }
+  end
+
   def test_keyword_splat_nil
     # cfunc call
     assert_equal(nil, p(**nil))
