@@ -4531,6 +4531,28 @@ m_core_hash_merge_kwd(VALUE recv, VALUE hash, VALUE kw)
 }
 
 static VALUE
+m_core_hash_merge_fresh_kwd(VALUE recv, VALUE hash, VALUE kw)
+{
+    // `hash` is a fresh `core#hash_new_for_merge` that nothing else references,
+    // so merge into it. `kw` is nil for `**nil` or a nil value.
+    if (!NIL_P(kw)) {
+        REWIND_CFP(rb_hash_merge2(hash, rb_to_hash_type(kw), false));
+    }
+    return hash;
+}
+
+static VALUE
+m_core_hash_new_for_merge(int argc, VALUE *argv, VALUE recv)
+{
+    // Like `newhash`, but with room in the embedded table to merge a small
+    // keyword splat in place.
+    long capa = argc / 2 < RHASH_AR_TABLE_MAX_SIZE ? RHASH_AR_TABLE_MAX_SIZE : argc / 2;
+    VALUE hash = rb_hash_new_capa(capa);
+    REWIND_CFP(rb_hash_bulk_insert(argc, argv, hash));
+    return hash;
+}
+
+static VALUE
 m_core_hash_merge_bang_kwd(VALUE recv, VALUE hash, VALUE kw)
 {
     // We own `hash` we should mutate it in place if possible.
@@ -4760,6 +4782,8 @@ Init_VM(void)
     rb_define_method_id(klass, id_core_hash_merge_bang_ptr, m_core_hash_merge_bang_ptr, -1);
     rb_define_method_id(klass, id_core_hash_merge_kwd, m_core_hash_merge_kwd, 2);
     rb_define_method_id(klass, id_core_hash_merge_bang_kwd, m_core_hash_merge_bang_kwd, 2);
+    rb_define_method_id(klass, id_core_hash_merge_fresh_kwd, m_core_hash_merge_fresh_kwd, 2);
+    rb_define_method_id(klass, id_core_hash_new_for_merge, m_core_hash_new_for_merge, -1);
     rb_define_method_id(klass, id_core_hash_coerce, m_core_hash_coerce, 1);
     rb_define_method_id(klass, id_core_raise, f_raise, -1);
     rb_define_method_id(klass, id_core_sprintf, f_sprintf, -1);
