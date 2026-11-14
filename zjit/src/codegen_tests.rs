@@ -8700,8 +8700,8 @@ fn test_send_polymorphic_receiver_with_polymorphic_caller_splat() {
         entry(CallerSplatA.new, [4, 5])
         entry(CallerSplatB.new, [6])
     ");
-    // Both a new length and an unprofiled receiver use the shared original Send.
-    assert_snapshot!(assert_compiles("
+    // Both a new length and an unprofiled receiver exit at the shared original Send.
+    assert_snapshot!(assert_compiles_allowing_exits("
         [entry(CallerSplatA.new, [7]), entry(CallerSplatB.new, [8, 9]),
          entry(CallerSplatA.new, [1, 2, 3]), entry(CallerSplatC.new, [10, 11, 12])]
     "), @"[[7], [8, 9], [1, 2, 3], [10, 11, 12]]");

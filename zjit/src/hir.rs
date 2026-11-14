@@ -663,6 +663,7 @@ pub enum SideExitReason {
     DirectiveInduced,
     SendWhileTracing,
     NoProfileSend,
+    PolymorphicSendMiss,
     NoProfileGetIvar,
     NoProfileSetIvar,
     InvokeBlockNotIfunc,
@@ -6708,7 +6709,8 @@ impl Function {
     /// This runs after strength reduction passes (type_specialize, inline) so
     /// that sends that can be optimized without profiling (e.g. known CFUNCs) are already handled.
     /// The remaining no-profile sends are turned into side exits that trigger recompilation with
-    /// fresh profile data.
+    /// fresh profile data. In an ISEQ's first version, so are the fallbacks of polymorphic sends,
+    /// which a receiver class missing from the profile reaches.
     fn convert_no_profile_sends(&mut self) {
         // On the final version, recompilation is not possible, so converting sends to
         // SideExits would just add overhead (the exit fires every time without benefit).
@@ -6717,6 +6719,7 @@ impl Function {
         if payload.versions.len() + 1 >= crate::codegen::max_iseq_versions() {
             return;
         }
+        let first_version = payload.versions.is_empty();
         for block in self.reverse_post_order() {
             let old_insns = std::mem::take(&mut self.blocks[block].insns);
             assert!(self.blocks[block].insns.is_empty());
@@ -6725,6 +6728,10 @@ impl Function {
                     &Insn::Send { state, reason: SendFallbackReason::SendNoProfiles, .. } => {
                         self.push_insn(block, Insn::SideExit { state, reason: Box::new(SideExitReason::NoProfileSend), recompile: Some(Recompile) });
                         // SideExit is a terminator; don't add remaining instructions
+                        break;
+                    }
+                    &Insn::Send { state, reason: SendFallbackReason::SendPolymorphicFallback, .. } if first_version => {
+                        self.push_insn(block, Insn::SideExit { state, reason: Box::new(SideExitReason::PolymorphicSendMiss), recompile: Some(Recompile) });
                         break;
                     }
                     _ => {

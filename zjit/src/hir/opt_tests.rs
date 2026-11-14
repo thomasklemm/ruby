@@ -13105,14 +13105,11 @@ mod hir_opt_tests {
           PatchPoint NoSingletonClass(C@0x1008)
           PatchPoint MethodRedefined(C@0x1008, foo@0x1010, cme:0x1018)
           v32:BasicObject = GetIvar v18, :@foo
-          Jump bb4(v32)
-        bb5():
-          v21:BasicObject = Send v10, :foo # SendFallbackReason: Send: polymorphic fallback
-          Jump bb4(v21)
-        bb4(v15:BasicObject):
           PatchPoint NoEPEscape(test)
           CheckInterrupts
-          Return v15
+          Return v32
+        bb5():
+          SideExit PolymorphicSendMiss recompile
         ");
     }
 
@@ -20813,13 +20810,13 @@ mod hir_opt_tests {
           PatchPoint MethodRedefined(Object@0x1018, !=@0x1020, cme:0x1028)
           PushInlineFrame :!=, v16 (0x1050), num_args=1
           PatchPoint MethodRedefined(Object@0x1018, ==@0x1070, cme:0x1078)
-          v70:CBool = IsBitEqual v16, v10
-          v71:BoolExact = BoxBool v70
-          v55:BoolExact = BoolNegate v71
+          v78:CBool = IsBitEqual v16, v10
+          v79:BoolExact = BoxBool v78
+          v60:BoolExact = BoolNegate v79
           PatchPoint NoEPEscape(!=)
           PopInlineFrame
           CheckInterrupts
-          Return v55
+          Return v60
         ");
     }
 
@@ -21216,22 +21213,21 @@ mod hir_opt_tests {
           CondBranchHasType v10, Fixnum, bb6(), bb7()
         bb6():
           PatchPoint MethodRedefined(Integer@0x1018, is_a?@0x1020, cme:0x1028)
-          v49:FalseClass = Const Value(false)
-          Jump bb4(v49)
+          v50:FalseClass = Const Value(false)
+          Jump bb4(v50)
         bb7():
           CondBranchHasType v10, StringExact, bb8(), bb5()
         bb8():
           PatchPoint NoSingletonClass(String@0x1010)
           PatchPoint MethodRedefined(String@0x1010, is_a?@0x1020, cme:0x1028)
-          v50:TrueClass = Const Value(true)
-          Jump bb4(v50)
-        bb5():
-          v31:BasicObject = Send v10, :is_a?, v16 # SendFallbackReason: Send: polymorphic fallback
-          Jump bb4(v31)
-        bb4(v20:BasicObject):
+          v51:TrueClass = Const Value(true)
+          Jump bb4(v51)
+        bb4(v20:BoolExact):
           PatchPoint NoEPEscape(test)
           CheckInterrupts
           Return v20
+        bb5():
+          SideExit PolymorphicSendMiss recompile
         ");
     }
 
@@ -24260,11 +24256,11 @@ mod hir_opt_tests {
           v31:ClassSubclass[Integer@0x1070] = Const Value(VALUE(0x1070))
           PatchPoint NoEPEscape(klass_eq)
           PatchPoint MethodRedefined(Class@0x1078, ==@0x1080, cme:0x1088)
-          v79:CBool = IsBitEqual v12, v31
-          v80:BoolExact = BoxBool v79
+          v80:CBool = IsBitEqual v12, v31
+          v81:BoolExact = BoxBool v80
           PopInlineFrame
           CheckInterrupts
-          Return v80
+          Return v81
         ");
     }
 
@@ -25436,6 +25432,156 @@ mod hir_opt_tests {
           v37:StringExact = StringCopy v36
           CheckInterrupts
           Return v37
+        ");
+    }
+
+    #[test]
+    fn test_recompile_polymorphic_send_miss() {
+        set_inline_threshold(0);
+        set_num_exits_until_invalidate(1);
+        eval("
+            class PolyMissA; def foo = 1; end
+            class PolyMissB; def foo = 2; end
+            class PolyMissC; def foo = 3; end
+            def test(o) = o.foo
+            test PolyMissA.new
+            test PolyMissB.new
+        ");
+        let profiled_hir = hir_string("test");
+        let iseq = crate::cruby::with_rubyvm(|| get_method_iseq("self", "test"));
+        assert_eq!(1, crate::payload::get_or_create_iseq_payload(iseq).versions.len());
+
+        eval("
+            test PolyMissC.new  # receiver class missing from the profile -> invalidate version 1
+            test PolyMissC.new  # re-profile
+            test PolyMissC.new  # compile version 2
+        ");
+        let recompiled_hir = hir_string("test");
+        assert_eq!(2, crate::payload::get_or_create_iseq_payload(iseq).versions.len());
+
+        assert_snapshot!(format!("{profiled_hir}\n{recompiled_hir}"), @"
+        fn test@<compiled>:5:
+        bb1():
+          EntryPoint interpreter
+          v1:BasicObject = LoadSelf
+          v2:CPtr = LoadSP
+          v3:BasicObject = LoadField v2, :o@0x1000
+          Jump bb3(v1, v3)
+        bb2():
+          EntryPoint JIT(0)
+          v6:BasicObject = LoadArg :self@0
+          v7:BasicObject = LoadArg :o@1
+          Jump bb3(v6, v7)
+        bb3(v9:BasicObject, v10:BasicObject):
+          CondBranchHasType v10, ObjectSubclass[class_exact:PolyMissB], bb6(), bb7()
+        bb6():
+          PatchPoint NoSingletonClass(PolyMissB@0x1008)
+          PatchPoint MethodRedefined(PolyMissB@0x1008, foo@0x1010, cme:0x1018)
+          v38:Fixnum[2] = Const Value(2)
+          Jump bb4(v38)
+        bb7():
+          CondBranchHasType v10, ObjectSubclass[class_exact:PolyMissA], bb8(), bb5()
+        bb8():
+          PatchPoint NoSingletonClass(PolyMissA@0x1040)
+          PatchPoint MethodRedefined(PolyMissA@0x1040, foo@0x1010, cme:0x1048)
+          v42:Fixnum[1] = Const Value(1)
+          Jump bb4(v42)
+        bb5():
+          v26:BasicObject = Send v10, :foo # SendFallbackReason: Send: polymorphic fallback
+          Jump bb4(v26)
+        bb4(v15:BasicObject):
+          PatchPoint NoEPEscape(test)
+          CheckInterrupts
+          Return v15
+
+        fn test@<compiled>:5:
+        bb1():
+          EntryPoint interpreter
+          v1:BasicObject = LoadSelf
+          v2:CPtr = LoadSP
+          v3:BasicObject = LoadField v2, :o@0x1000
+          Jump bb3(v1, v3)
+        bb2():
+          EntryPoint JIT(0)
+          v6:BasicObject = LoadArg :self@0
+          v7:BasicObject = LoadArg :o@1
+          Jump bb3(v6, v7)
+        bb3(v9:BasicObject, v10:BasicObject):
+          CondBranchHasType v10, ObjectSubclass[class_exact:PolyMissC], bb6(), bb7()
+        bb6():
+          PatchPoint NoSingletonClass(PolyMissC@0x1008)
+          PatchPoint MethodRedefined(PolyMissC@0x1008, foo@0x1010, cme:0x1018)
+          v43:Fixnum[3] = Const Value(3)
+          Jump bb4(v43)
+        bb7():
+          CondBranchHasType v10, ObjectSubclass[class_exact:PolyMissA], bb8(), bb9()
+        bb8():
+          PatchPoint NoSingletonClass(PolyMissA@0x1040)
+          PatchPoint MethodRedefined(PolyMissA@0x1040, foo@0x1010, cme:0x1048)
+          v47:Fixnum[1] = Const Value(1)
+          Jump bb4(v47)
+        bb9():
+          CondBranchHasType v10, ObjectSubclass[class_exact:PolyMissB], bb10(), bb5()
+        bb10():
+          PatchPoint NoSingletonClass(PolyMissB@0x1070)
+          PatchPoint MethodRedefined(PolyMissB@0x1070, foo@0x1010, cme:0x1078)
+          v51:Fixnum[2] = Const Value(2)
+          Jump bb4(v51)
+        bb5():
+          v31:BasicObject = Send v10, :foo # SendFallbackReason: Send: polymorphic fallback
+          Jump bb4(v31)
+        bb4(v15:BasicObject):
+          PatchPoint NoEPEscape(test)
+          CheckInterrupts
+          Return v15
+        ");
+    }
+
+    #[test]
+    fn test_polymorphic_send_miss_after_first_version() {
+        // Version 1 is compiled by eval, so the HIR built here is for version 2.
+        set_inline_threshold(0);
+        eval("
+            class PolyFinalA; def foo = 1; end
+            class PolyFinalB; def foo = 2; end
+            def test(o) = o.foo
+            test PolyFinalA.new
+            test PolyFinalB.new
+        ");
+        assert_snapshot!(hir_string("test"), @"
+        fn test@<compiled>:4:
+        bb1():
+          EntryPoint interpreter
+          v1:BasicObject = LoadSelf
+          v2:CPtr = LoadSP
+          v3:BasicObject = LoadField v2, :o@0x1000
+          Jump bb3(v1, v3)
+        bb2():
+          EntryPoint JIT(0)
+          v6:BasicObject = LoadArg :self@0
+          v7:BasicObject = LoadArg :o@1
+          Jump bb3(v6, v7)
+        bb3(v9:BasicObject, v10:BasicObject):
+          CondBranchHasType v10, ObjectSubclass[class_exact:PolyFinalB], bb6(), bb7()
+        bb6():
+          PatchPoint NoSingletonClass(PolyFinalB@0x1008)
+          PatchPoint MethodRedefined(PolyFinalB@0x1008, foo@0x1010, cme:0x1018)
+          v38:Fixnum[2] = Const Value(2)
+          Jump bb4(v38)
+        bb7():
+          CondBranchHasType v10, ObjectSubclass[class_exact:PolyFinalA], bb8(), bb5()
+        bb8():
+          PatchPoint NoSingletonClass(PolyFinalA@0x1040)
+          PatchPoint MethodRedefined(PolyFinalA@0x1040, foo@0x1010, cme:0x1048)
+          v42:Fixnum[1] = Const Value(1)
+          Jump bb4(v42)
+        bb5():
+          v26:BasicObject = Send v10, :foo # SendFallbackReason: Send: polymorphic fallback
+          Jump bb4(v26)
+        bb4(v15:BasicObject):
+          PatchPoint NoEPEscape(test)
+          CheckInterrupts
+          Return v15
         ");
     }
 
@@ -28779,13 +28925,12 @@ mod hir_opt_tests {
           v95:BasicObject = InvokeBlockIseqDirect (0x1060), v94
           PopInlineFrame
           Jump bb4(v95)
-        bb10():
-          v31:BasicObject = Send v10, 0x1060, :foo # SendFallbackReason: Send: polymorphic fallback
-          Jump bb4(v31)
         bb4(v15:BasicObject):
           PatchPoint NoEPEscape(test)
           CheckInterrupts
           Return v15
+        bb10():
+          SideExit PolymorphicSendMiss recompile
         ");
     }
 
@@ -28879,13 +29024,12 @@ mod hir_opt_tests {
           PatchPoint MethodRedefined(A@0x1048, foo@0x1018, cme:0x1050)
           v85:Fixnum[42] = Const Value(42)
           Jump bb14(v85)
-        bb18():
-          v65:BasicObject = Send v12, &block, :foo, v18 # SendFallbackReason: Send: polymorphic fallback
-          Jump bb14(v65)
-        bb14(v54:BasicObject):
+        bb14(v54:Fixnum):
           PatchPoint NoEPEscape(test)
           CheckInterrupts
           Return v54
+        bb18():
+          SideExit PolymorphicSendMiss recompile
         ");
     }
 
