@@ -9896,13 +9896,13 @@ mod hir_opt_tests {
           v11:StringExact = StringCopy v10
           PatchPoint NoSingletonClass(String@0x1008)
           PatchPoint MethodRedefined(String@0x1008, dup@0x1010, cme:0x1018)
-          v25:BasicObject = CCallWithFrame v11, :String#dup@0x1040
-          PatchPoint NoSingletonClass(String@0x1008)
+          v25:CShape = LoadField v11, :shape_id@0x1040
+          v26:CShape = GuardNoBitsSet v25, SHAPE_ID_HAS_IVAR_MASK=CUInt32(67633150)
+          v27:StringExact = StringCopy v11
           PatchPoint MethodRedefined(String@0x1008, freeze@0x1041, cme:0x1048)
-          v29:StringExact = GuardType v25, StringExact recompile
-          v30:BasicObject = CCallWithFrame v29, :String#freeze@0x1070
+          v32:BasicObject = CCallWithFrame v27, :String#freeze@0x1070
           CheckInterrupts
-          Return v30
+          Return v32
         ");
     }
 
@@ -10000,13 +10000,13 @@ mod hir_opt_tests {
           v11:StringExact = StringCopy v10
           PatchPoint NoSingletonClass(String@0x1008)
           PatchPoint MethodRedefined(String@0x1008, dup@0x1010, cme:0x1018)
-          v25:BasicObject = CCallWithFrame v11, :String#dup@0x1040
-          PatchPoint NoSingletonClass(String@0x1008)
+          v25:CShape = LoadField v11, :shape_id@0x1040
+          v26:CShape = GuardNoBitsSet v25, SHAPE_ID_HAS_IVAR_MASK=CUInt32(67633150)
+          v27:StringExact = StringCopy v11
           PatchPoint MethodRedefined(String@0x1008, -@@0x1041, cme:0x1048)
-          v29:StringExact = GuardType v25, StringExact recompile
-          v30:BasicObject = CCallWithFrame v29, :String#-@@0x1070
+          v32:BasicObject = CCallWithFrame v27, :String#-@@0x1070
           CheckInterrupts
-          Return v30
+          Return v32
         ");
     }
 
@@ -15231,6 +15231,70 @@ mod hir_opt_tests {
           PatchPoint NoEPEscape(test)
           CheckInterrupts
           Return v26
+        ");
+    }
+
+    #[test]
+    fn test_inline_string_dup() {
+        eval(r#"
+            def test(str) = str.dup
+            test("warmup")
+        "#);
+        assert_snapshot!(hir_string("test"), @"
+        fn test@<compiled>:2:
+        bb1():
+          EntryPoint interpreter
+          v1:BasicObject = LoadSelf
+          v2:CPtr = LoadSP
+          v3:BasicObject = LoadField v2, :str@0x1000
+          Jump bb3(v1, v3)
+        bb2():
+          EntryPoint JIT(0)
+          v6:BasicObject = LoadArg :self@0
+          v7:BasicObject = LoadArg :str@1
+          Jump bb3(v6, v7)
+        bb3(v9:BasicObject, v10:BasicObject):
+          PatchPoint NoSingletonClass(String@0x1008)
+          PatchPoint MethodRedefined(String@0x1008, dup@0x1010, cme:0x1018)
+          v26:StringExact = GuardType v10, StringExact recompile
+          v27:CShape = LoadField v26, :shape_id@0x1040
+          v28:CShape = GuardNoBitsSet v27, SHAPE_ID_HAS_IVAR_MASK=CUInt32(67633150)
+          v29:StringExact = StringCopy v26
+          PatchPoint NoEPEscape(test)
+          CheckInterrupts
+          Return v29
+        ");
+    }
+
+    #[test]
+    fn test_dont_inline_string_dup_with_ivars() {
+        eval(r#"
+            def test(str) = str.dup
+            S = +"warmup"
+            S.instance_variable_set(:@a, 1)
+            test(S)
+        "#);
+        assert_snapshot!(hir_string("test"), @"
+        fn test@<compiled>:2:
+        bb1():
+          EntryPoint interpreter
+          v1:BasicObject = LoadSelf
+          v2:CPtr = LoadSP
+          v3:BasicObject = LoadField v2, :str@0x1000
+          Jump bb3(v1, v3)
+        bb2():
+          EntryPoint JIT(0)
+          v6:BasicObject = LoadArg :self@0
+          v7:BasicObject = LoadArg :str@1
+          Jump bb3(v6, v7)
+        bb3(v9:BasicObject, v10:BasicObject):
+          PatchPoint NoSingletonClass(String@0x1008)
+          PatchPoint MethodRedefined(String@0x1008, dup@0x1010, cme:0x1018)
+          v26:StringExact = GuardType v10, StringExact recompile
+          v27:BasicObject = CCallWithFrame v26, :String#dup@0x1040
+          PatchPoint NoEPEscape(test)
+          CheckInterrupts
+          Return v27
         ");
     }
 
