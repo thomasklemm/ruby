@@ -13005,6 +13005,81 @@ mod hir_opt_tests {
     }
 
     #[test]
+    fn test_setivar_singleton_receiver_monomorphic_shape() {
+        // Like test_getivar_singleton_receiver_monomorphic_shape, but for an ivar write: a module
+        // method writes an existing ivar on objects that were `extend`ed.
+        set_call_threshold(3);
+        eval("
+            class C
+              def initialize
+                @a = 1
+              end
+            end
+
+            module M
+              def foo = @a = 2
+            end
+
+            O1 = C.new.extend(M)
+            O2 = C.new.extend(M)
+            O1.foo
+            O2.foo
+        ");
+        assert_snapshot!(hir_string_proc("M.instance_method(:foo)"), @"
+        fn foo@<compiled>:9:
+        bb1():
+          EntryPoint interpreter
+          v1:BasicObject = LoadSelf
+          Jump bb3(v1)
+        bb2():
+          EntryPoint JIT(0)
+          v4:BasicObject = LoadArg :self@0
+          Jump bb3(v4)
+        bb3(v6:BasicObject):
+          v10:Fixnum[2] = Const Value(2)
+          v13:HeapBasicObject = GuardType v6, HeapBasicObject
+          SideExit NoProfileSetIvar recompile
+        ");
+    }
+
+    #[test]
+    fn test_setivar_singleton_receiver_shape_transition() {
+        // Same as above, but the write adds a new ivar, so it transitions the shape.
+        set_call_threshold(3);
+        eval("
+            class C
+              def initialize
+                @a = 1
+              end
+            end
+
+            module M
+              def foo = @b = 2
+            end
+
+            O1 = C.new.extend(M)
+            O2 = C.new.extend(M)
+            O1.foo
+            O2.foo
+        ");
+        assert_snapshot!(hir_string_proc("M.instance_method(:foo)"), @"
+        fn foo@<compiled>:9:
+        bb1():
+          EntryPoint interpreter
+          v1:BasicObject = LoadSelf
+          Jump bb3(v1)
+        bb2():
+          EntryPoint JIT(0)
+          v4:BasicObject = LoadArg :self@0
+          Jump bb3(v4)
+        bb3(v6:BasicObject):
+          v10:Fixnum[2] = Const Value(2)
+          v13:HeapBasicObject = GuardType v6, HeapBasicObject
+          SideExit NoProfileSetIvar recompile
+        ");
+    }
+
+    #[test]
     fn test_optimize_attr_reader_polymorphic_classes() {
         // The call site profiles as polymorphic (A;S0, B;S1). Each dispatch arm stands for one
         // profiled type, so it gets a monomorphic receiver profile and the attr_reader
