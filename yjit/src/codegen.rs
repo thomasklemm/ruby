@@ -9918,11 +9918,28 @@ fn gen_invokeblock_specialized(
 
         // Share the successor with other chains
         jump_to_next_insn(jit, asm)
-    } else if comptime_handler.symbol_p() {
-        gen_counter_incr(jit, asm, Counter::invokeblock_symbol);
-        None
-    } else { // Proc
-        gen_counter_incr(jit, asm, Counter::invokeblock_proc);
+    } else { // Symbol or Proc
+        asm_comment!(asm, "get local EP");
+        let ep_opnd = gen_get_lep(jit, asm);
+        let block_handler_opnd = asm.load(
+            Opnd::mem(64, ep_opnd, SIZEOF_VALUE_I32 * VM_ENV_DATA_INDEX_SPECVAL)
+        );
+
+        asm_comment!(asm, "guard block_handler type");
+        asm.test(block_handler_opnd, 0x3.into()); // neither VM_BH_ISEQ_BLOCK_P nor VM_BH_IFUNC_P
+        jit_chain_guard(
+            JCC_JNZ,
+            jit,
+            asm,
+            SEND_MAX_DEPTH,
+            Counter::guard_invokeblock_tag_changed,
+        );
+
+        if comptime_handler.symbol_p() {
+            gen_counter_incr(jit, asm, Counter::invokeblock_symbol);
+        } else {
+            gen_counter_incr(jit, asm, Counter::invokeblock_proc);
+        }
         None
     }
 }
