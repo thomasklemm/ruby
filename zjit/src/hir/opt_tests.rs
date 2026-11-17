@@ -13038,7 +13038,11 @@ mod hir_opt_tests {
         bb3(v6:BasicObject):
           v10:Fixnum[2] = Const Value(2)
           v13:HeapBasicObject = GuardType v6, HeapBasicObject
-          SideExit NoProfileSetIvar recompile
+          v14:CShape = LoadField v13, :shape_id@0x1000
+          v15:CShape[0x1001] = GuardBitEquals v14, CShape(0x1001) recompile
+          StoreField v13, :@a@0x1002, v10
+          CheckInterrupts
+          Return v10
         ");
     }
 
@@ -13075,7 +13079,13 @@ mod hir_opt_tests {
         bb3(v6:BasicObject):
           v10:Fixnum[2] = Const Value(2)
           v13:HeapBasicObject = GuardType v6, HeapBasicObject
-          SideExit NoProfileSetIvar recompile
+          v14:CShape = LoadField v13, :shape_id@0x1000
+          v15:CShape[0x1001] = GuardBitEquals v14, CShape(0x1001) recompile
+          StoreField v13, :@b@0x1002, v10
+          v18:CShape[0x1003] = Const CShape(0x1003)
+          StoreField v13, :shape_id@0x1000, v18
+          CheckInterrupts
+          Return v10
         ");
     }
 
