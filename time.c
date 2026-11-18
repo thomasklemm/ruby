@@ -2585,10 +2585,13 @@ time_init_vtm(VALUE time, struct vtm vtm, VALUE zone)
         if (zone_timelocal(zone, time)) {
             return time;
         }
-        else if (NIL_P(vtm.utc_offset = utc_offset_arg(zone))) {
+        else if (NIL_P(utc = utc_offset_arg(zone))) {
             if (NIL_P(zone = find_timezone(time, zone)) || !zone_timelocal(zone, time))
                 invalid_utc_offset(arg);
+            return time;
         }
+        vtm.utc_offset = utc == UTC_ZONE ? INT2FIX(0) : utc;
+        validate_utc_offset(vtm.utc_offset);
     }
 
     if (utc == UTC_ZONE) {
