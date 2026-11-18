@@ -2588,6 +2588,11 @@ time_init_vtm(VALUE time, struct vtm vtm, VALUE zone)
         else if (NIL_P(vtm.utc_offset = utc_offset_arg(zone))) {
             if (NIL_P(zone = find_timezone(time, zone)) || !zone_timelocal(zone, time))
                 invalid_utc_offset(arg);
+            return time;
+        }
+        else if (vtm.utc_offset == UTC_ZONE) {
+            vtm.utc_offset = INT2FIX(0);
+            utc = UTC_ZONE;
         }
     }
 

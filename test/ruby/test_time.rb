@@ -59,6 +59,16 @@ class TestTime < Test::Unit::TestCase
     assert_equal([0, 0, 0, 2, 1, 2000, 0, 2, false, "UTC"], Time.new(2000, 1, 1, 24, 0, 0, "-00:00").to_a)
   end
 
+  def test_new_with_zone_to_str_utc
+    %w[UTC Z -00:00].each do |name|
+      zone = Object.new
+      zone.define_singleton_method(:to_str) {name}
+      assert_equal([0, 0, 0, 1, 1, 2000, 6, 1, false, "UTC"], Time.new(2000, 1, 1, 0, 0, 0, zone).to_a, name)
+      assert_equal([0, 0, 0, 2, 1, 2000, 0, 2, false, "UTC"], Time.new(2000, 1, 1, 24, 0, 0, in: zone).to_a, name)
+      assert_predicate(Time.new("2000-01-01 00:00:00", in: zone), :utc?, name)
+    end
+  end
+
   def test_new_from_string
     assert_raise(ArgumentError) { Time.new(2021, 1, 1, "+09:99") }
 
