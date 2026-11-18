@@ -646,6 +646,7 @@ pub enum SideExitReason {
     ExpandArray,
     GuardNotFrozen,
     GuardNotShared,
+    GuardNoIvars,
     GuardLess,
     GuardGreaterEq,
     GuardIOBufferReadable,
@@ -1015,6 +1016,8 @@ pub enum Insn {
     Entries { targets: Vec<BlockId> },
 
     StringCopy { val: InsnId, chilled: bool, state: InsnId },
+    /// Copy a String with `rb_str_dup` like `String#dup`; StringCopy embeds large embedded sources instead of sharing them
+    StringDup { val: InsnId, state: InsnId },
     StringIntern { val: InsnId, state: InsnId },
     StringConcat { strings: Vec<InsnId>, state: InsnId },
     StringCoderange { string: InsnId, cached: InsnId },
@@ -1521,6 +1524,7 @@ macro_rules! for_each_operand_impl {
             | Insn::Defined { v: val, state, .. }
             | Insn::StringIntern { val, state }
             | Insn::StringCopy { val, state, .. }
+            | Insn::StringDup { val, state }
             | Insn::ObjectAlloc { val, state }
             | Insn::GuardType { val, state, .. }
             | Insn::GuardBitEquals { val, state, .. }
@@ -1839,6 +1843,8 @@ impl Insn {
             Insn::Param { .. } => effects::Empty,
             Insn::LoadArg { .. } => effects::Empty,
             Insn::StringCopy { .. } => allocates,
+            // Reads the source; sharing a mutable source's buffer also writes its flags
+            Insn::StringDup { .. } => Effect::read_write(abstract_heaps::PC.union(abstract_heaps::Allocator).union(abstract_heaps::Other), abstract_heaps::Allocator.union(abstract_heaps::Other)),
             Insn::StringIntern { .. } => effects::Any,
             Insn::StringConcat { .. } => effects::Any,
             Insn::StringCoderange { .. } => Effect::read_write(abstract_heaps::Other, abstract_heaps::Other),
@@ -2256,6 +2262,7 @@ impl<'a> std::fmt::Display for InsnPrinter<'a> {
                 write!(f, "ObjectAllocClass {class_name}:{}", class.print(self.ptr_map))
             }
             Insn::StringCopy { val, .. } => { write!(f, "StringCopy {val}") }
+            Insn::StringDup { val, .. } => { write!(f, "StringDup {val}") }
             Insn::StringConcat { strings, .. } => {
                 write!(f, "StringConcat")?;
                 write_separated!(f, " ", ", ", strings);
@@ -3657,6 +3664,16 @@ impl Function {
         }
     }
 
+    /// Assume no NEWOBJ hook is active, so allocating without a frame doesn't change what the hook sees.
+    pub fn assume_no_newobj_hook(&mut self, block: BlockId, state: InsnId) -> bool {
+        if unsafe { rb_zjit_newobj_hook_enabled_p() } {
+            false
+        } else {
+            self.push_insn(block, Insn::PatchPoint { invariant: Invariant::NoNewObjHook, state });
+            true
+        }
+    }
+
     /// Assume that only the root box is active, so we can safely read from the prime classext.
     /// Returns true if safe to assume so and emits a PatchPoint.
     pub fn assume_root_box(&mut self, block: BlockId, state: InsnId) -> bool {
@@ -3878,6 +3895,7 @@ impl Function {
                 .map_or(types::CInt64, |fixnum| Type::from_cint(types::CInt64, fixnum)),
             Insn::FixnumAref { .. } => types::Fixnum,
             Insn::StringCopy { .. } => types::StringExact,
+            Insn::StringDup { .. } => types::StringExact,
             Insn::StringIntern { .. } => types::Symbol,
             Insn::StringConcat { .. } => types::StringExact,
             Insn::StringCoderange { .. } => types::CInt64,
@@ -4212,7 +4230,7 @@ impl Function {
     /// Return the profiled type of the HIR instruction at the given Snapshot, if it is known to be
     /// monomorphic or skewed polymorphic. This historical type
     /// record is not a guarantee and must be checked with a GuardType or similar.
-    fn profiled_type_of_at(&self, insn: InsnId, state: InsnId) -> Option<ProfiledType> {
+    pub fn profiled_type_of_at(&self, insn: InsnId, state: InsnId) -> Option<ProfiledType> {
         match self.resolve_receiver_type_from_profile(insn, state) {
             ReceiverTypeResolution::Monomorphic { profiled_type }
             | ReceiverTypeResolution::SkewedPolymorphic { profiled_type } => Some(profiled_type),
@@ -4917,6 +4935,11 @@ impl Function {
     pub fn guard_not_frozen(&mut self, block: BlockId, recv: InsnId, state: InsnId) {
         let flags = self.load_rbasic_flags(block, recv);
         self.push_insn(block, Insn::GuardNoBitsSet { val: flags, mask: Const::CUInt64(RUBY_FL_FREEZE as u64), mask_name: Some(ID!(RUBY_FL_FREEZE)), reason: Box::new(SideExitReason::GuardNotFrozen), state });
+    }
+
+    pub fn guard_no_ivars(&mut self, block: BlockId, recv: InsnId, state: InsnId) {
+        let shape = self.load_shape(block, recv);
+        self.push_insn(block, Insn::GuardNoBitsSet { val: shape, mask: Const::CUInt32(SHAPE_ID_HAS_IVAR_MASK), mask_name: Some(ID!(SHAPE_ID_HAS_IVAR_MASK)), reason: Box::new(SideExitReason::GuardNoIvars), state });
     }
 
     pub fn guard_not_shared(&mut self, block: BlockId, recv: InsnId, state: InsnId) {
@@ -8486,7 +8509,7 @@ impl Function {
                 Ok(())
             }
             // Instructions with String operands
-            Insn::StringCopy { val, .. } => self.assert_subtype(insn_id, val, types::StringExact),
+            Insn::StringCopy { val, .. } | Insn::StringDup { val, .. } => self.assert_subtype(insn_id, val, types::StringExact),
             Insn::StringIntern { val, .. } => self.assert_subtype(insn_id, val, types::String),
             Insn::StringAppend { recv, other, recv_flags, other_flags, .. } => {
                 self.assert_subtype(insn_id, recv, types::StringExact)?;

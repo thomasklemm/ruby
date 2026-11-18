@@ -303,6 +303,53 @@ fn test_dupstring() {
 }
 
 #[test]
+fn test_string_dup() {
+    eval(r#"
+        def test(str) = str.dup
+        test(+"a")
+        test(+"a")
+    "#);
+    assert_snapshot!(assert_compiles(r#"
+        sources = ["frozen".freeze, "x" * 300, "\xff".b, +"é"]
+        sources.map { |src| dup = test(src); [dup == src, dup.equal?(src), dup.frozen?, dup.encoding] }
+    "#), @"[[true, false, false, #<Encoding:UTF-8>], [true, false, false, #<Encoding:UTF-8>], [true, false, false, #<Encoding:BINARY (ASCII-8BIT)>], [true, false, false, #<Encoding:UTF-8>]]");
+}
+
+#[test]
+fn test_string_dup_with_ivars_or_subclass() {
+    eval(r#"
+        class MyString < String
+          def initialize_copy(other) = (super; @copied = true)
+        end
+        def test(str) = str.dup
+        test(+"a")
+        test(+"a")
+    "#);
+    assert_snapshot!(inspect(r#"
+        with_ivar = +"ivar"
+        with_ivar.instance_variable_set(:@a, 1)
+        sub = MyString.new("sub")
+        [test(with_ivar).instance_variable_get(:@a), test(sub).class, test(sub).instance_variable_get(:@copied)]
+    "#), @"[1, MyString, true]");
+}
+
+#[test]
+fn test_string_dup_of_mutated_constant() {
+    eval(r#"
+        S = +"abc"
+        def test = S.dup
+        test
+        test
+    "#);
+    assert_snapshot!(assert_compiles(r#"
+        S << "!"
+        S.force_encoding(Encoding::BINARY)
+        dup = test
+        [dup, dup.encoding]
+    "#), @r#"["abc!", #<Encoding:BINARY (ASCII-8BIT)>]"#);
+}
+
+#[test]
 fn test_dupchilledstring() {
     eval(r#"
         def test = ""

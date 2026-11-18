@@ -125,6 +125,7 @@ fn main() {
         .allowlist_function("rb_zjit_array_dup_can_fastpath")
         .allowlist_function("rb_zjit_array_new_can_fastpath")
         .allowlist_function("rb_zjit_hash_dup_can_fastpath")
+        .allowlist_function("rb_zjit_newobj_hook_enabled_p")
         .allowlist_function("rb_zjit_range_new_fastpath")
         .allowlist_function("rb_zjit_array_aref_with_adjusted_index")
 
@@ -138,6 +139,7 @@ fn main() {
         .allowlist_function("rb_jit_shape_capacity")
         .allowlist_var("rb_invalid_shape_id")
         .allowlist_type("shape_id_fl_type")
+        .allowlist_type("shape_id_mask")
         .allowlist_var("VM_KW_SPECIFIED_BITS_MAX")
         .allowlist_var("SHAPE_ID_NUM_BITS")
         .allowlist_function("rb_obj_is_kind_of")

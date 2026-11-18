@@ -295,6 +295,7 @@ pub fn init() -> Annotations {
     annotate!(rb_cFloat, "to_int", inline_float_to_i);
     annotate!(rb_cFloat, "==", inline_float_eq);
     annotate!(rb_cString, "to_s", inline_string_to_s, types::StringExact);
+    annotate!(rb_cString, "dup", inline_string_dup);
     annotate!(rb_cString, "to_sym", inline_string_to_sym, types::Symbol);
     annotate!(rb_cString, "freeze", inline_freeze);
     annotate!(rb_cString, "-@", inline_string_uminus);
@@ -350,6 +351,24 @@ fn inline_string_to_s(fun: &mut hir::Function, block: hir::BlockId, recv: hir::I
         return Some(recv);
     }
     None
+}
+
+/// Inline `String#dup` on a bare String, which `rb_str_dup_m` copies without `initialize_copy`.
+fn inline_string_dup(fun: &mut hir::Function, block: hir::BlockId, recv: hir::InsnId, args: &[hir::InsnId], state: hir::InsnId) -> Option<hir::InsnId> {
+    let &[] = args else { return None; };
+    if !fun.likely_a(recv, types::StringExact, state) {
+        return None;
+    }
+    if fun.profiled_type_of_at(recv, state).is_some_and(|profiled_type| profiled_type.shape().has_ivars()) {
+        return None;
+    }
+    // Without String#dup's frame, allocation tracing would attribute the copy to the caller
+    if !fun.assume_no_newobj_hook(block, state) {
+        return None;
+    }
+    let recv = fun.coerce_to(block, recv, types::StringExact, state);
+    fun.guard_no_ivars(block, recv, state);
+    Some(fun.push_insn(block, hir::Insn::StringDup { val: recv, state }))
 }
 
 fn inline_string_to_sym(fun: &mut hir::Function, block: hir::BlockId, recv: hir::InsnId, args: &[hir::InsnId], state: hir::InsnId) -> Option<hir::InsnId> {

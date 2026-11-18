@@ -506,6 +506,8 @@ pub const SHAPE_ID_FL_NON_CANONICAL_MASK: shape_id_fl_type = 402653184;
 pub const SHAPE_ID_FLAGS_MASK: shape_id_fl_type = 2146959360;
 pub const SHAPE_ID_FL_PRIVATE_MASK: shape_id_fl_type = 1677197312;
 pub type shape_id_fl_type = u32;
+pub const SHAPE_ID_HAS_IVAR_MASK: shape_id_mask = 67633150;
+pub type shape_id_mask = u32;
 pub const METHOD_VISI_UNDEF: rb_method_visibility_t = 0;
 pub const METHOD_VISI_PUBLIC: rb_method_visibility_t = 1;
 pub const METHOD_VISI_PRIVATE: rb_method_visibility_t = 2;
@@ -2454,6 +2456,7 @@ unsafe extern "C" {
         alloc_size_out: *mut usize,
         flags_out: *mut VALUE,
     );
+    pub fn rb_zjit_newobj_hook_enabled_p() -> bool;
     pub fn rb_profile_frames(
         start: ::std::os::raw::c_int,
         limit: ::std::os::raw::c_int,
