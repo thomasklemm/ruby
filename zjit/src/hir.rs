@@ -646,6 +646,7 @@ pub enum SideExitReason {
     ExpandArray,
     GuardNotFrozen,
     GuardNotShared,
+    GuardNoIvars,
     GuardLess,
     GuardGreaterEq,
     GuardIOBufferReadable,
@@ -4212,7 +4213,7 @@ impl Function {
     /// Return the profiled type of the HIR instruction at the given Snapshot, if it is known to be
     /// monomorphic or skewed polymorphic. This historical type
     /// record is not a guarantee and must be checked with a GuardType or similar.
-    fn profiled_type_of_at(&self, insn: InsnId, state: InsnId) -> Option<ProfiledType> {
+    pub fn profiled_type_of_at(&self, insn: InsnId, state: InsnId) -> Option<ProfiledType> {
         match self.resolve_receiver_type_from_profile(insn, state) {
             ReceiverTypeResolution::Monomorphic { profiled_type }
             | ReceiverTypeResolution::SkewedPolymorphic { profiled_type } => Some(profiled_type),
@@ -4917,6 +4918,11 @@ impl Function {
     pub fn guard_not_frozen(&mut self, block: BlockId, recv: InsnId, state: InsnId) {
         let flags = self.load_rbasic_flags(block, recv);
         self.push_insn(block, Insn::GuardNoBitsSet { val: flags, mask: Const::CUInt64(RUBY_FL_FREEZE as u64), mask_name: Some(ID!(RUBY_FL_FREEZE)), reason: Box::new(SideExitReason::GuardNotFrozen), state });
+    }
+
+    pub fn guard_no_ivars(&mut self, block: BlockId, recv: InsnId, state: InsnId) {
+        let shape = self.load_shape(block, recv);
+        self.push_insn(block, Insn::GuardNoBitsSet { val: shape, mask: Const::CUInt32(SHAPE_ID_HAS_IVAR_MASK), mask_name: Some(ID!(SHAPE_ID_HAS_IVAR_MASK)), reason: Box::new(SideExitReason::GuardNoIvars), state });
     }
 
     pub fn guard_not_shared(&mut self, block: BlockId, recv: InsnId, state: InsnId) {

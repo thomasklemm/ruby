@@ -306,6 +306,10 @@ impl ShapeId {
         (self.0 & SHAPE_ID_FL_FROZEN) != 0
     }
 
+    pub fn has_ivars(self) -> bool {
+        (self.0 & SHAPE_ID_HAS_IVAR_MASK) != 0
+    }
+
     pub fn layout(self) -> ShapeLayout {
         match self.0 & SHAPE_ID_LAYOUT_MASK {
             SHAPE_ID_LAYOUT_ROBJECT => ShapeLayout::RObject,
@@ -1770,6 +1774,7 @@ pub(crate) mod ids {
         name: rb_mod_name
         name: RUBY_FL_FREEZE
         name: RUBY_ELTS_SHARED
+        name: SHAPE_ID_HAS_IVAR_MASK
         name: U8
         name: u16
         name: U16

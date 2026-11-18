@@ -2253,7 +2253,7 @@ fn gen_string_copy(jit: &mut JITState, asm: &mut Assembler, function: &Function,
     // TODO: split rb_ec_str_resurrect into separate functions
     gen_prepare_leaf_call_with_gc(asm, state);
 
-    let Some(src) = function.type_of(val_id).ruby_object() else {
+    let Some(src) = function.type_of(val_id).ruby_object().filter(|src| src.is_frozen()) else {
         return asm_ccall!(asm, rb_ec_str_resurrect, EC, recv, (chilled as i64).into());
     };
 
