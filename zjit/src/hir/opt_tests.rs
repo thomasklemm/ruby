@@ -10236,7 +10236,7 @@ mod hir_opt_tests {
         bb3(v9:BasicObject, v10:BasicObject):
           v14:StringExact[VALUE(0x1008)] = Const Value(VALUE(0x1008))
           PatchPoint NoSingletonClass(String@0x1010)
-          v19:String = GuardType v10, String
+          v19:String = GuardType v10, String recompile
           PatchPoint NoEPEscape(test)
           v30:StringExact = StringConcat v14, v19
           PatchPoint NoEPEscape(test)
@@ -10273,7 +10273,7 @@ mod hir_opt_tests {
         bb3(v9:BasicObject, v10:BasicObject):
           v14:StringExact[VALUE(0x1008)] = Const Value(VALUE(0x1008))
           PatchPoint NoSingletonClass(MyString@0x1010)
-          v19:String = GuardType v10, String
+          v19:String = GuardType v10, String recompile
           PatchPoint NoEPEscape(test)
           v30:StringExact = StringConcat v14, v19
           PatchPoint NoEPEscape(test)
@@ -10306,7 +10306,7 @@ mod hir_opt_tests {
           Jump bb3(v6, v7)
         bb3(v9:BasicObject, v10:BasicObject):
           v14:StringExact[VALUE(0x1008)] = Const Value(VALUE(0x1008))
-          v18:ArrayExact = GuardType v10, ArrayExact
+          v18:ArrayExact = GuardType v10, ArrayExact recompile
           PatchPoint NoSingletonClass(Array@0x1010)
           PatchPoint MethodRedefined(Array@0x1010, to_s@0x1018, cme:0x1020)
           v42:BasicObject = CCallWithFrame v18, :Array#to_s@0x1048
@@ -10351,7 +10351,7 @@ mod hir_opt_tests {
         bb3(v9:BasicObject, v10:BasicObject):
           v14:StringExact[VALUE(0x1008)] = Const Value(VALUE(0x1008))
           PatchPoint MethodRedefined(Integer@0x1010, to_s@0x1018, cme:0x1020)
-          v20:Fixnum = GuardType v10, Fixnum
+          v20:Fixnum = GuardType v10, Fixnum recompile
           v21:StringExact = FixnumToString v20
           PatchPoint NoEPEscape(test)
           v32:StringExact = StringConcat v14, v21
@@ -10387,7 +10387,7 @@ mod hir_opt_tests {
         bb3(v9:BasicObject, v10:BasicObject):
           v14:StringExact[VALUE(0x1008)] = Const Value(VALUE(0x1008))
           PatchPoint MethodRedefined(Class@0x1010, to_s@0x1018, cme:0x1020)
-          v20:ClassSubclass[class_exact*:Class@VALUE(0x1010)] = GuardType v10, ClassSubclass[class_exact*:Class@VALUE(0x1010)]
+          v20:ClassSubclass[class_exact*:Class@VALUE(0x1010)] = GuardType v10, ClassSubclass[class_exact*:Class@VALUE(0x1010)] recompile
           v21:String|NilClass = CCall v20, :rb_mod_name@0x1048
           v22:String = GuardType v21, String recompile
           PatchPoint NoEPEscape(test)
@@ -10395,6 +10395,90 @@ mod hir_opt_tests {
           PatchPoint NoEPEscape(test)
           CheckInterrupts
           Return v33
+        ");
+    }
+
+    #[test]
+    fn test_objtostring_guard_failure_recompiles() {
+        set_num_exits_until_invalidate(1);
+        eval(r##"
+            def test(a) = "<#{a}>"
+            test("div")  # profile
+            test("div")  # compile (version 1 with a String guard on a)
+        "##);
+        let string_hir = hir_string("test");
+        let iseq = crate::cruby::with_rubyvm(|| get_method_iseq("self", "test"));
+        assert_eq!(1, crate::payload::get_or_create_iseq_payload(iseq).versions.len());
+
+        eval(r##"
+            test(:div)  # guard failure -> invalidate version 1
+            test(:div)  # re-profile
+            test(:div)  # compile version 2
+        "##);
+        let symbol_hir = hir_string("test");
+        assert_eq!(2, crate::payload::get_or_create_iseq_payload(iseq).versions.len());
+
+        assert_snapshot!(format!("{string_hir}\n{symbol_hir}"), @"
+        fn test@<compiled>:2:
+        bb1():
+          EntryPoint interpreter
+          v1:BasicObject = LoadSelf
+          v2:CPtr = LoadSP
+          v3:BasicObject = LoadField v2, :a@0x1000
+          Jump bb3(v1, v3)
+        bb2():
+          EntryPoint JIT(0)
+          v6:BasicObject = LoadArg :self@0
+          v7:BasicObject = LoadArg :a@1
+          Jump bb3(v6, v7)
+        bb3(v9:BasicObject, v10:BasicObject):
+          v14:StringExact[VALUE(0x1008)] = Const Value(VALUE(0x1008))
+          PatchPoint NoSingletonClass(String@0x1010)
+          v19:String = GuardType v10, String recompile
+          PatchPoint NoEPEscape(test)
+          v30:StringExact[VALUE(0x1018)] = Const Value(VALUE(0x1018))
+          v32:StringExact = StringConcat v14, v19, v30
+          PatchPoint NoEPEscape(test)
+          CheckInterrupts
+          Return v32
+
+        fn test@<compiled>:2:
+        bb1():
+          EntryPoint interpreter
+          v1:BasicObject = LoadSelf
+          v2:CPtr = LoadSP
+          v3:BasicObject = LoadField v2, :a@0x1000
+          Jump bb3(v1, v3)
+        bb2():
+          EntryPoint JIT(0)
+          v6:BasicObject = LoadArg :self@0
+          v7:BasicObject = LoadArg :a@1
+          Jump bb3(v6, v7)
+        bb3(v9:BasicObject, v10:BasicObject):
+          v14:StringExact[VALUE(0x1008)] = Const Value(VALUE(0x1008))
+          CondBranchHasType v10, String, bb4(), bb5()
+        bb4():
+          v19:String = RefineType v10, String
+          Jump bb6(v19)
+        bb5():
+          v21:NotString = RefineType v10, NotString
+          v22:BasicObject = Send v21, :to_s # SendFallbackReason: Send: polymorphic call site
+          Jump bb6(v22)
+        bb6(v24:BasicObject):
+          PatchPoint NoEPEscape(test)
+          CondBranchHasType v24, String, bb7(), bb8()
+        bb7():
+          v29:String = RefineType v24, String
+          Jump bb9(v29)
+        bb8():
+          v31:StringExact = AnyToString v10
+          Jump bb9(v31)
+        bb9(v33:String):
+          v35:StringExact[VALUE(0x1010)] = Const Value(VALUE(0x1010))
+          v37:StringExact = StringConcat v14, v33, v35
+          PatchPoint NoEPEscape(test)
+          CheckInterrupts
+          Return v37
         ");
     }
 
@@ -10423,7 +10507,7 @@ mod hir_opt_tests {
           Jump bb3(v6, v7)
         bb3(v9:BasicObject, v10:BasicObject):
           v14:StringExact[VALUE(0x1008)] = Const Value(VALUE(0x1008))
-          v18:ClassSubclass[class_exact*:Class@VALUE(0x1010)] = GuardType v10, ClassSubclass[class_exact*:Class@VALUE(0x1010)]
+          v18:ClassSubclass[class_exact*:Class@VALUE(0x1010)] = GuardType v10, ClassSubclass[class_exact*:Class@VALUE(0x1010)] recompile
           PatchPoint MethodRedefined(Class@0x1010, to_s@0x1018, cme:0x1020)
           PushInlineFrame :to_s, v18 (0x1048), num_args=0
           v46:StringExact[VALUE(0x1068)] = Const Value(VALUE(0x1068))
@@ -15405,7 +15489,7 @@ mod hir_opt_tests {
         bb3(v9:BasicObject, v10:BasicObject):
           v14:StringExact[VALUE(0x1008)] = Const Value(VALUE(0x1008))
           PatchPoint MethodRedefined(Integer@0x1010, to_s@0x1018, cme:0x1020)
-          v20:Fixnum = GuardType v10, Fixnum
+          v20:Fixnum = GuardType v10, Fixnum recompile
           v21:StringExact = FixnumToString v20
           PatchPoint NoEPEscape(test)
           v32:StringExact = StringConcat v14, v21
