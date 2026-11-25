@@ -5089,6 +5089,49 @@ fn test_zsuper_with_keyword_params() {
 }
 
 #[test]
+fn test_zsuper_with_keyword_params_to_forwardable() {
+    eval(r#"
+        class A
+          def foo(*args, **kw) = [args, kw]
+        end
+        class B < A
+          def foo(...) = super
+        end
+        class C < B
+          def foo(a, k: nil) = super
+        end
+
+        def test = C.new.foo(1, k: 2)
+        test
+    "#);
+    assert_snapshot!(assert_compiles("test"), @"[[1], {k: 2}]");
+}
+
+#[test]
+fn test_zsuper_with_keyword_params_to_forwardable_after_recompile() {
+    set_call_threshold(1);
+    eval(r#"
+        class A
+          def foo(*args, **kw) = [args, kw]
+        end
+        class B < A
+          def foo(...) = super
+        end
+        class C < B
+          def foo(a, k: nil)
+            a + 1
+            super
+          end
+        end
+
+        def test(a) = C.new.foo(a, k: 2)
+        test(1)
+        test(1.5)
+    "#);
+    assert_snapshot!(inspect("100.times.map { test(1) }.uniq"), @"[[[1], {k: 2}]]");
+}
+
+#[test]
 fn test_invokesuper_to_cfunc_simple_args() {
     assert_snapshot!(inspect(r#"
         class MyString < String

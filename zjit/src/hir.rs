@@ -7473,7 +7473,8 @@ impl Function {
                             let super_iseq = unsafe { get_def_iseq_ptr((*super_cme).def) };
                             // TODO: pass Option<blockiseq> to build_send_direct_args when we start specializing `super { ... }`.
                             let keyword_args: Vec<InsnId>;
-                            let caller_args = if let Some(pairs) = &static_kw_splat {
+                            // A forwardable callee takes the zsuper's callinfo as is, which has the Hash.
+                            let caller_args = if let Some(pairs) = static_kw_splat.as_ref().filter(|_| unsafe { super_iseq.params() }.flags.forwardable() == 0) {
                                 // Replace the Hash with its values, passed as explicit keywords.
                                 keyword_args = args[..args.len() - 1].iter().copied().chain(pairs.iter().map(|&(_, value)| value)).collect();
                                 CallerArguments {
