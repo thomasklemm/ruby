@@ -2320,9 +2320,11 @@ resolve_refined_method(VALUE refinements, const rb_method_entry_t *me, VALUE *de
             if (RB_TYPE_P(me->owner, T_MODULE) && defined_class_ptr && RB_TYPE_P(*defined_class_ptr, T_ICLASS)) {
                 refinement = module_refinement_iclass(refinement, *defined_class_ptr);
             }
-            tmp_me = search_method_protect(refinement, me->called_id, defined_class_ptr);
+            VALUE refinement_class;
+            tmp_me = search_method_protect(refinement, me->called_id, &refinement_class);
 
             if (tmp_me && tmp_me->def->type != VM_METHOD_TYPE_REFINED) {
+                if (defined_class_ptr) *defined_class_ptr = refinement_class;
                 return tmp_me;
             }
         }

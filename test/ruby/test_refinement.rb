@@ -3513,6 +3513,27 @@ class TestRefinement < Test::Unit::TestCase
     end;
   end
 
+  def test_undef_in_active_module_refinement_with_send
+    assert_separately([], <<-"end;")
+      module M
+        def foo = :M
+      end
+      class C1
+        include M
+      end
+      class C2
+        include M
+      end
+      using Module.new { refine(M) { undef_method :foo } }
+      c1 = C1.new
+      assert_raise(NoMethodError) { c1.foo }
+      assert_raise(NoMethodError) { c1.send(:foo) }
+      c2 = C2.new
+      assert_raise(NoMethodError) { c2.send(:foo) }
+      assert_raise(NoMethodError) { c2.foo }
+    end;
+  end
+
   def test_undefined_refined_method_defined
     assert_separately([], <<-"end;")
     bug10753 = '[ruby-core:67656] [Bug #10753]'
